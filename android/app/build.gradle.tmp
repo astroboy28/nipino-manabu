@@ -1,0 +1,131 @@
+// android/app/build.gradle
+// ─── Nipino-Manabu Android build configuration ───────────────────────────────
+
+}
+
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    // Flutter plugin  Eapplied by Flutter tooling
+    id "dev.flutter.flutter-gradle-plugin"
+    // Firebase / Google services
+    id "com.google.gms.google-services"
+    // Firebase Crashlytics
+    id "com.google.firebase.crashlytics"
+}
+
+android {
+    namespace "com.nipino.manabu"
+
+    // Must match compileSdkVersion used by flutter_local_notifications & in_app_purchase
+    compileSdk 34
+
+    ndkVersion flutter.ndkVersion
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
+
+    sourceSets {
+        main.java.srcDirs += "src/main/kotlin"
+    }
+
+    defaultConfig {
+        applicationId "com.nipino.manabu"
+
+        // Minimum SDK 21 covers 99%+ of active Android devices
+        minSdk 21
+
+        // Target SDK 34 required by Google Play as of Aug 2024
+        targetSdk 34
+
+        versionCode flutter.versionCode
+        versionName flutter.versionName
+
+        // MultiDex required for large dependency graphs
+        multiDexEnabled true
+
+        // Billing library version
+        resValue "string", "billing_public_key", ""
+    }
+
+    // ── Signing ──────────────────────────────────────────────────────────────
+    signingConfigs {
+        release {
+        }
+    }
+
+    buildTypes {
+        debug {
+            // Debug build  Enot signed with release key
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-debug"
+            debuggable true
+            // Disable Crashlytics in debug
+            manifestPlaceholders = [crashlyticsCollectionEnabled: "false"]
+            firebaseCrashlytics {
+                mappingFileUploadEnabled false
+            }
+        }
+        release {
+            signingConfig signingConfigs.release
+
+            // Shrink & obfuscate (recommended for production)
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"),
+                          "proguard-rules.pro"
+
+            // Enable Crashlytics in release
+            manifestPlaceholders = [crashlyticsCollectionEnabled: "true"]
+            firebaseCrashlytics {
+                mappingFileUploadEnabled true
+                nativeSymbolUploadEnabled false
+            }
+        }
+    }
+
+    // ── Bundle (AAB) for Play Store ──────────────────────────────────────────
+    bundle {
+        language {
+            enableSplit = true
+        }
+        density {
+            enableSplit = true
+        }
+        abi {
+            enableSplit = true
+        }
+    }
+}
+
+flutter {
+    source "../.."
+}
+
+dependencies {
+    // MultiDex
+    implementation "androidx.multidex:multidex:2.0.1"
+
+    // Firebase BOM  Emanages all Firebase library versions together
+    implementation platform("com.google.firebase:firebase-bom:32.7.0")
+    implementation "com.google.firebase:firebase-analytics-ktx"
+    implementation "com.google.firebase:firebase-messaging-ktx"
+    implementation "com.google.firebase:firebase-crashlytics-ktx"
+
+    // Google Play Billing (required by in_app_purchase plugin)
+    implementation "com.android.billingclient:billing:6.1.0"
+    implementation "com.android.billingclient:billing-ktx:6.1.0"
+
+    // Core Kotlin
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
+    implementation "androidx.core:core-ktx:1.12.0"
+
+    // Window insets (required by Flutter on Android 15+)
+    implementation "androidx.window:window:1.2.0"
+}

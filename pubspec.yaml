@@ -1,0 +1,86 @@
+name: nipino_manabu
+description: Nipino-Manabu — Japanese JLPT Learning App (N5-N1) for Filipinos in Japan
+publish_to: 'none'
+version: 1.0.0+56
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # HTTP & networking
+  http: ^1.2.0
+  http_parser: ^4.0.2
+  connectivity_plus: ^6.0.1
+
+  # Secure token storage (Keychain on iOS, EncryptedSharedPreferences on Android)
+  flutter_secure_storage: ^9.0.0
+
+  # State management
+  provider: ^6.1.2
+
+  # Local DB + caching
+  shared_preferences: ^2.2.2
+  sqflite: ^2.3.2
+  path: ^1.9.0
+
+  # UI + fonts
+  google_fonts: ^6.2.1
+  flutter_animate: ^4.5.0
+
+  # Image loading + caching
+  cached_network_image: ^3.3.1
+
+  # Audio playback (listening quiz questions)
+  just_audio: ^0.9.36
+  audio_session: ^0.1.18
+
+  # File picking (admin media upload)
+  image_picker: ^1.0.7
+  file_picker: ^8.0.0
+
+  # Charts / progress
+  fl_chart: ^0.67.0
+
+  # Firebase
+  firebase_core: ^2.27.1
+  firebase_messaging: ^14.7.15
+  firebase_crashlytics: ^3.4.9
+
+  # Push notifications (local foreground display)
+
+  # In-App Purchases (Apple IAP + Google Play Billing)
+  in_app_purchase: ^3.1.13
+  in_app_purchase_android: ^0.3.3
+  in_app_purchase_storekit: ^0.3.14
+
+  # Deep links
+  app_links: ^6.1.1
+
+  # Utilities
+  intl: ^0.19.0
+  uuid: ^4.3.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+    - assets/animations/
+    - assets/lottie/
+    - assets/sounds/
+  fonts:
+    - family: NotoSansJP
+      fonts:
+        - asset: assets/fonts/NotoSansJP-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/NotoSansJP-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/NotoSansJP-Bold.ttf
+          weight: 700

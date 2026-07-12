@@ -1,0 +1,27 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "REPLACE_WITH_YOUR_TEAM_ID.com.nipino.manabu",
+        "paths": [
+          "/app/*",
+          "/email-verified*",
+          "/reset-password*",
+          "/quiz*",
+          "/leaderboard*"
+        ]
+      }
+    ]
+  },
+  "webcredentials": {
+    "apps": [
+      "REPLACE_WITH_YOUR_TEAM_ID.com.nipino.manabu"
+    ]
+  },
+  "activitycontinuation": {
+    "apps": [
+      "REPLACE_WITH_YOUR_TEAM_ID.com.nipino.manabu"
+    ]
+  }
+}

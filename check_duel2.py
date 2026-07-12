@@ -1,0 +1,7 @@
+c = open('lib/models/social_models.dart', encoding='utf-8').read()
+idx = c.find('class OpenDuelRoom')
+print(c[idx:idx+800])
+print("---")
+s = open('lib/services/social_api_service.dart', encoding='utf-8').read()
+idx2 = s.find('joinDuel')
+print(s[idx2:idx2+200])

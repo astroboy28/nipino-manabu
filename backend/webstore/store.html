@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Buy Coins — Nipino-Manabu</title>
+<script src="https://js.stripe.com/v3/"></script>
+<script src="https://www.paypal.com/sdk/js?client-id=REPLACE_PAYPAL_CLIENT_ID&currency=USD&intent=capture"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  background:#F2F2F2;color:#111;min-height:100vh}
+.topbar{background:#CC0000;padding:16px 20px;display:flex;align-items:center;gap:10px}
+.logo-mark{width:36px;height:36px;background:#fff;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;font-size:18px;
+  font-weight:700;color:#CC0000;font-family:serif}
+.logo-text{color:#fff;font-size:16px;font-weight:700}
+.logo-text span{opacity:.75}
+.page{max-width:480px;margin:0 auto;padding:24px 16px}
+h1{font-size:22px;font-weight:700;margin-bottom:6px}
+.sub{font-size:13px;color:#666;margin-bottom:24px}
+.product{background:#fff;border:1px solid #E5E5E5;border-radius:10px;
+  padding:16px;margin-bottom:10px;cursor:pointer;position:relative;
+  transition:border-color .15s}
+.product:hover,.product.selected{border-color:#CC0000}
+.product.selected{background:#FFF0F0}
+.popular-badge{position:absolute;top:-9px;right:12px;background:#CC0000;color:#fff;
+  font-size:10px;font-weight:700;padding:2px 10px;border-radius:10px;letter-spacing:.3px}
+.prod-top{display:flex;align-items:center;gap:10px}
+.coin-icon{font-size:28px}
+.prod-name{font-size:14px;font-weight:700}
+.prod-coins{font-size:12px;color:#666}
+.prod-price{margin-left:auto;font-size:18px;font-weight:700;color:#CC0000}
+.radio{width:18px;height:18px;border:2px solid #CCC;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;transition:.15s}
+.product.selected .radio{border-color:#CC0000}
+.radio-dot{width:8px;height:8px;border-radius:50%;background:#CC0000;display:none}
+.product.selected .radio-dot{display:block}
+.balance-box{background:#FFF8E6;border:1px solid #E8C56A;border-radius:8px;
+  padding:12px 16px;display:flex;align-items:center;gap:10px;margin-bottom:20px}
+.balance-icon{font-size:22px}
+.balance-label{font-size:12px;color:#854F0B}
+.balance-val{font-size:18px;font-weight:700;color:#854F0B}
+.gateway-btns{display:flex;gap:8px;margin-bottom:12px}
+.pay-btn{flex:1;padding:13px;border-radius:8px;border:none;
+  font-size:14px;font-weight:700;cursor:pointer;transition:opacity .15s}
+.pay-btn:disabled{opacity:.5;cursor:not-allowed}
+.stripe-btn{background:#635BFF;color:#fff}
+.stripe-btn:hover:not(:disabled){opacity:.88}
+#paypal-button-container{min-height:44px}
+.divider{display:flex;align-items:center;gap:10px;margin:16px 0;color:#999;font-size:12px}
+.divider::before,.divider::after{content:'';flex:1;height:1px;background:#E5E5E5}
+.status-box{border-radius:8px;padding:14px 16px;font-size:13px;
+  margin-bottom:16px;display:none;line-height:1.5}
+.status-box.show{display:block}
+.status-success{background:#EAF3DE;border:1px solid #97C459;color:#27500A}
+.status-error{background:#FCEBEB;border:1px solid #F09595;color:#791F1F}
+.status-loading{background:#E6F1FB;border:1px solid #85B7EB;color:#0C447C}
+#stripe-payment-element{margin-bottom:16px}
+.back-link{display:block;text-align:center;color:#CC0000;font-size:13px;
+  text-decoration:none;margin-top:16px}
+.secure-note{display:flex;align-items:center;justify-content:center;gap:6px;
+  font-size:11px;color:#999;margin-top:12px}
+.token-input{width:100%;padding:10px 14px;border:1px solid #E5E5E5;border-radius:6px;
+  font-size:13px;margin-bottom:12px;outline:none}
+.token-input:focus{border-color:#CC0000}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="logo-mark">日</div>
+  <div class="logo-text">Nipino-<span>Manabu</span></div>
+</div>
+
+<div class="page">
+  <h1>Buy coins</h1>
+  <p class="sub">Select a pack and pay securely. Coins appear in the app instantly.</p>
+
+  <!-- Auth token input (user copies from app or logs in via deep link) -->
+  <div id="auth-section">
+    <p style="font-size:13px;color:#666;margin-bottom:8px">
+      To link your purchase to your account, paste your account token from
+      the Nipino-Manabu app → Profile → Copy account token.
+    </p>
+    <input class="token-input" type="text" id="auth-token"
+      placeholder="Paste your account token here">
+  </div>
+
+  <!-- Coin balance -->
+  <div class="balance-box" id="balance-box" style="display:none">
+    <div class="balance-icon">🪙</div>
+    <div>
+      <div class="balance-label">Current balance</div>
+      <div class="balance-val" id="balance-val">— coins</div>
+    </div>
+  </div>
+
+  <!-- Status messages -->
+  <div class="status-box status-loading" id="status-loading">
+    ⏳ Processing payment...
+  </div>
+  <div class="status-box status-success" id="status-success"></div>
+  <div class="status-box status-error"   id="status-error"></div>
+
+  <!-- Products -->
+  <div id="products-list"></div>
+
+  <!-- Payment options -->
+  <div id="payment-section" style="display:none">
+    <div id="stripe-payment-element"></div>
+
+    <div class="gateway-btns">
+      <button class="pay-btn stripe-btn" id="stripe-btn" disabled
+        onclick="payWithStripe()">
+        💳 Pay with Card
+      </button>
+    </div>
+
+    <div class="divider">or</div>
+
+    <div id="paypal-button-container"></div>
+
+    <div class="secure-note">
+      🔒 Payments processed by Stripe and PayPal — your card details never touch our server.
+    </div>
+  </div>
+
+  <a href="nipinomanabu://store" class="back-link">← Back to app</a>
+</div>
+
+<script>
+const API  = 'https://api.nipino-manabu.com/v1';
+const STRIPE_PK = 'REPLACE_WITH_STRIPE_PUBLISHABLE_KEY';
+
+let stripe, elements, selectedProduct, authToken;
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+stripe = Stripe(STRIPE_PK);
+
+// Check for token in URL (deep link from app)
+const urlToken = new URLSearchParams(window.location.search).get('token');
+if (urlToken) {
+  document.getElementById('auth-token').value = urlToken;
+  document.getElementById('auth-section').style.display = 'none';
+  authToken = urlToken;
+  loadBalance();
+}
+
+document.getElementById('auth-token').addEventListener('change', function() {
+  authToken = this.value.trim();
+  if (authToken) loadBalance();
+});
+
+// ── Load balance ─────────────────────────────────────────────────────────────
+async function loadBalance() {
+  try {
+    const res = await fetch(`${API}/user/profile`, {
+      headers: { 'Authorization': 'Bearer ' + authToken, 'Accept': 'application/json' }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      document.getElementById('balance-val').textContent = `${data.user.coins} coins`;
+      document.getElementById('balance-box').style.display = 'flex';
+    }
+  } catch(e) {}
+}
+
+// ── Load products ─────────────────────────────────────────────────────────────
+async function loadProducts() {
+  const res  = await fetch(`${API}/webpayment/products`);
+  const data = await res.json();
+  const list = document.getElementById('products-list');
+
+  data.products.forEach(p => {
+    const icons = { coins_100: '🥉', coins_500: '🥈', coins_1200: '🥇', coins_3000: '💎' };
+    list.innerHTML += `
+      <div class="product" id="prod-${p.id}" onclick="selectProduct('${p.id}')">
+        ${p.popular ? '<div class="popular-badge">BEST VALUE</div>' : ''}
+        <div class="prod-top">
+          <div class="radio"><div class="radio-dot"></div></div>
+          <div class="coin-icon">${icons[p.id] || '🪙'}</div>
+          <div>
+            <div class="prod-name">${p.label}</div>
+            <div class="prod-coins">+${p.coins.toLocaleString()} coins</div>
+          </div>
+          <div class="prod-price">$${p.amount.toFixed(2)}</div>
+        </div>
+      </div>`;
+  });
+}
+loadProducts();
+
+// ── Select product ────────────────────────────────────────────────────────────
+function selectProduct(id) {
+  document.querySelectorAll('.product').forEach(p => p.classList.remove('selected'));
+  document.getElementById('prod-' + id).classList.add('selected');
+  selectedProduct = id;
+  document.getElementById('payment-section').style.display = 'block';
+  document.getElementById('stripe-btn').disabled = !authToken;
+  initStripeElements(id);
+  initPayPalButtons(id);
+}
+
+// ── Stripe ────────────────────────────────────────────────────────────────────
+async function initStripeElements(productId) {
+  if (!authToken) return;
+  const res  = await apiFetch('/webpayment/stripe-create', { product_id: productId });
+  if (!res.success) { showError(res.message); return; }
+
+  elements = stripe.elements({ clientSecret: res.client_secret });
+  const el  = elements.create('payment');
+  el.mount('#stripe-payment-element');
+  document.getElementById('stripe-btn').disabled = false;
+}
+
+async function payWithStripe() {
+  if (!authToken || !elements) return;
+  showLoading();
+  const { error } = await stripe.confirmPayment({
+    elements,
+    confirmParams: {
+      return_url: `${window.location.origin}/store/success`,
+    },
+    redirect: 'if_required',
+  });
+  if (error) {
+    showError(error.message);
+  } else {
+    // Payment confirmed without redirect
+    await pollOrderStatus();
+  }
+}
+
+// ── PayPal ────────────────────────────────────────────────────────────────────
+let paypalButtonsRendered = false;
+function initPayPalButtons(productId) {
+  if (!authToken) return;
+  const container = document.getElementById('paypal-button-container');
+  container.innerHTML = '';
+  paypalButtonsRendered = false;
+
+  paypal.Buttons({
+    style: { layout: 'horizontal', color: 'gold', shape: 'rect', label: 'pay', height: 44 },
+
+    async createOrder() {
+      const res = await apiFetch('/webpayment/paypal-create', { product_id: productId });
+      if (!res.success) { showError(res.message); return null; }
+      return res.order_id;
+    },
+
+    async onApprove(data) {
+      showLoading();
+      const res = await apiFetch('/webpayment/paypal-capture', { order_id: data.orderID });
+      if (res.success) {
+        showSuccess(`🎉 ${res.coins_granted} coins added! New balance: ${res.total_coins} coins.`);
+        document.getElementById('balance-val').textContent = `${res.total_coins} coins`;
+      } else {
+        showError(res.message || 'Capture failed. Contact support.');
+      }
+    },
+
+    onError(err) { showError('PayPal error. Please try again or use card payment.'); }
+  }).render('#paypal-button-container');
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+async function apiFetch(path, body) {
+  const res = await fetch(API + path, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + authToken,
+    },
+    body: JSON.stringify(body),
+  });
+  return res.json();
+}
+
+async function pollOrderStatus() {
+  // Poll for up to 30 seconds after payment confirmed
+  for (let i = 0; i < 10; i++) {
+    await new Promise(r => setTimeout(r, 3000));
+    try {
+      const res = await fetch(
+        `${API}/webpayment/order-status?order_id=latest`,
+        { headers: { Authorization: 'Bearer ' + authToken } }
+      );
+      const data = await res.json();
+      if (data.status === 'completed') {
+        showSuccess(`🎉 ${data.coins_granted} coins added! New balance: ${data.total_coins} coins.`);
+        document.getElementById('balance-val').textContent = `${data.total_coins} coins`;
+        return;
+      }
+    } catch(e) {}
+  }
+  showError('Payment may have succeeded but we could not confirm. Check your coin balance in the app.');
+}
+
+function showLoading() {
+  hide(['status-success','status-error']);
+  show('status-loading');
+}
+function showSuccess(msg) {
+  document.getElementById('status-success').textContent = msg;
+  hide(['status-loading','status-error']);
+  show('status-success');
+}
+function showError(msg) {
+  document.getElementById('status-error').textContent = '⚠️ ' + msg;
+  hide(['status-loading','status-success']);
+  show('status-error');
+}
+function show(id) { document.getElementById(id).classList.add('show'); }
+function hide(ids) { ids.forEach(id => document.getElementById(id).classList.remove('show')); }
+</script>
+</body>
+</html>

@@ -1,0 +1,79 @@
+RewriteEngine On
+
+# Force HTTPS
+RewriteCond %{HTTPS} off
+RewriteCond %{HTTP_HOST} !^localhost [NC]
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# Security headers
+Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+Header always set X-Content-Type-Options "nosniff"
+Header always set X-Frame-Options "DENY"
+Header always set X-XSS-Protection "1; mode=block"
+Header always set Referrer-Policy "strict-origin-when-cross-origin"
+Header always set Permissions-Policy "geolocation=(), microphone=(), camera=()"
+
+# Block sensitive files
+<FilesMatch "\.(env|sql|log|md|yaml|yml|lock|sh)$">
+    Require all denied
+</FilesMatch>
+
+# cron/ scripts are CLI-only — nothing should route here over HTTP, and
+# daily.php also self-checks PHP_SAPI, but deny it at the web-server level too.
+RewriteRule ^cron/ - [F,L]
+
+# .well-known (deep links — Apple and Google verify these, must be 200 with NO redirect)
+RewriteRule ^\.well-known/apple-app-site-association$ api/wellknown.php?file=apple-app-site-association [QSA,L,NS]
+RewriteRule ^\.well-known/assetlinks\.json$ api/wellknown.php?file=assetlinks.json [QSA,L,NS]
+
+# Health check
+RewriteRule ^health$ api/health.php [QSA,L]
+
+# Auth
+RewriteRule ^v1/auth/(.+)$ api/auth.php?action=$1 [QSA,L]
+
+# User + Account (GDPR deletion, export)
+RewriteRule ^v1/user/(.+)$ api/user.php?action=$1 [QSA,L]
+RewriteRule ^v1/account/(.+)$ api/account.php?action=$1 [QSA,L]
+
+# Quiz
+RewriteRule ^v1/quiz/(.+)$ api/quiz.php?action=$1 [QSA,L]
+
+# Leaderboard
+RewriteRule ^v1/leaderboard/(.+)$ api/leaderboard.php?action=$1 [QSA,L]
+
+# IAP Store (Apple + Google)
+RewriteRule ^v1/store/(.+)$ api/store.php?action=$1 [QSA,L]
+
+# Web store (Stripe + PayPal)
+RewriteRule ^v1/webpayment/(.+)$ api/webpayment.php?action=$1 [QSA,L]
+
+# Social: duels, challenges, referrals
+RewriteRule ^v1/duel/(.+)$ api/duel.php?action=$1 [QSA,L]
+RewriteRule ^v1/challenge/(.+)$ api/challenge.php?action=$1 [QSA,L]
+RewriteRule ^v1/referral/(.+)$ api/referral.php?action=$1 [QSA,L]
+
+# Media (image + audio upload)
+RewriteRule ^v1/media/(.+)$ api/media.php?action=$1 [QSA,L]
+
+# Legal pages (public)
+RewriteRule ^privacy$ api/privacy.php [QSA,L]
+RewriteRule ^terms$ api/terms.php [QSA,L]
+
+# Web coin store
+RewriteRule ^store$ webstore/store.html [QSA,L]
+
+Options -Indexes -ExecCGI
+
+<IfModule mod_php.c>
+    php_value display_errors 0
+    php_value log_errors 1
+    php_value expose_php 0
+    php_value max_execution_time 30
+    php_value memory_limit 256M
+    php_value post_max_size 10M
+    php_value upload_max_filesize 9M
+    php_flag session.cookie_secure 1
+    php_flag session.cookie_httponly 1
+    php_value session.cookie_samesite Strict
+</IfModule>
