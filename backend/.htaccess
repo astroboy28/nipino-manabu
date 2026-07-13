@@ -68,6 +68,11 @@ RewriteRule ^terms$ api/terms.php [QSA,L]
 # Web coin store
 RewriteRule ^store$ webstore/store.html [QSA,L]
 
+# Password reset landing page (linked from the reset email — see
+# email/Mailer.php) — the page has existed at webstore/reset-password.html
+# all along, it just never had a clean-URL route like /store does.
+RewriteRule ^reset-password$ webstore/reset-password.html [QSA,L]
+
 Options -Indexes -ExecCGI
 
 <IfModule mod_php.c>
