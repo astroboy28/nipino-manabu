@@ -509,8 +509,13 @@ class _DuelQuizScreenState extends State<DuelQuizScreen>
     // correct_index is withheld by the server while the room is 'active'
     // (see duel.php handleGetRoom) so an opponent can't read ahead via
     // /duel/room — is_correct from the answer response is the only
-    // correctness signal available during live play.
-    _lastAnswerCorrect = res.data?['is_correct'] as bool?;
+    // correctness signal available during live play. This has to be its
+    // own setState (not just an assignment) — the earlier setState above
+    // already ran before this response came back, so without a rebuild
+    // here the green/red reveal would never actually reach the screen:
+    // the next rebuild after this point is the 1200ms-later "advance to
+    // next question" one, which resets _lastAnswerCorrect to null again.
+    if (mounted) setState(() => _lastAnswerCorrect = res.data?['is_correct'] as bool?);
 
     await Future.delayed(const Duration(milliseconds: 1200));
     if (!mounted) return;
