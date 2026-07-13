@@ -6,6 +6,7 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/config/Database.php';
 require_once dirname(__DIR__) . '/middleware/Auth.php';
 require_once dirname(__DIR__) . '/middleware/Monitor.php';
+require_once dirname(__DIR__) . '/redis/RateLimiter.php';
 
 Auth::securityHeaders();
 Monitor::register();
@@ -18,6 +19,7 @@ match (true) {
     $method === 'GET'  && $action === 'progress' => handleProgress($db),
     $method === 'GET'  && $action === 'badges'   => handleBadges($db),
     $method === 'GET'  && $action === 'history'  => handleHistory($db),
+    $method === 'GET'  && $action === 'search'   => handleSearch($db),
     $method === 'PUT'  && $action === 'profile'  => handleUpdateProfile($db),
     default => respond(404, false, 'Endpoint not found'),
 };
@@ -116,6 +118,31 @@ function handleHistory(PDO $db): void {
         'limit'   => $limit,
         'offset'  => $offset,
     ]);
+}
+
+// ── GET /user/search ──────────────────────────────────────────────────────────
+function handleSearch(PDO $db): void {
+    $claims = Auth::requireAuth();
+    $userId = (int)$claims['sub'];
+    $ip     = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+    RateLimiter::enforce($ip, 'user_search', 30, 60);
+
+    $q = Auth::sanitizeString($_GET['q'] ?? '', 50);
+    if (mb_strlen($q) < 2) { respond(200, true, 'Query too short.', ['users' => []]); return; }
+
+    // Escape ILIKE wildcards in the user-supplied query so '%'/'_' in a
+    // search term aren't interpreted as pattern metacharacters.
+    $escaped = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $q);
+
+    $stmt = $db->prepare(
+        "SELECT id, username, avatar_url FROM users
+         WHERE username ILIKE ? ESCAPE '\\' AND id != ? AND is_active = TRUE
+         ORDER BY username LIMIT 10"
+    );
+    $stmt->execute(['%' . $escaped . '%', $userId]);
+    $users = $stmt->fetchAll();
+
+    respond(200, true, 'Users found.', ['users' => $users]);
 }
 
 // ── PUT /user/profile ─────────────────────────────────────────────────────────

@@ -254,6 +254,26 @@ function handleJoin(PDO $db): void {
 
     $db->beginTransaction();
     try {
+        // Lock the room row so concurrent joins serialize instead of both
+        // reading the same stale "joined < max_players" snapshot — without
+        // this, two users joining a 1-slot-left room at the same instant
+        // could both pass the earlier check and overfill it past max_players.
+        $lockStmt = $db->prepare(
+            'SELECT dr.status, dr.max_players,
+               (SELECT COUNT(*) FROM duel_participants WHERE room_id=dr.id) AS joined
+             FROM duel_rooms dr WHERE dr.id=? FOR UPDATE'
+        );
+        $lockStmt->execute([$room['id']]);
+        $locked = $lockStmt->fetch();
+        if (!$locked || $locked['status'] !== 'waiting') {
+            $db->rollBack();
+            respond(409, false, 'This room has already started or ended.'); return;
+        }
+        if ((int)$locked['joined'] >= (int)$locked['max_players']) {
+            $db->rollBack();
+            respond(409, false, 'Room is full.'); return;
+        }
+
         // Atomic + re-checked inside the transaction — same reasoning as
         // handleCreate: the earlier SELECT can go stale under concurrency.
         $deduct = $db->prepare('UPDATE users SET coins=coins-? WHERE id=? AND coins>=?');

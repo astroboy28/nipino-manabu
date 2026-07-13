@@ -203,6 +203,19 @@ class ChallengeEntry {
   );
 }
 
+// ── User search result (duel invite picker) ───────────────────────────────────
+class UserSearchResult {
+  final int     id;
+  final String  username;
+  final String? avatarUrl;
+
+  const UserSearchResult({required this.id, required this.username, this.avatarUrl});
+
+  factory UserSearchResult.fromJson(Map<String, dynamic> j) => UserSearchResult(
+    id: j['id'], username: j['username'], avatarUrl: j['avatar_url'],
+  );
+}
+
 // ── Open duel room listing ────────────────────────────────────────────────────
 class OpenDuelRoom {
   final String uuid;

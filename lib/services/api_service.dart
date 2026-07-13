@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart' show VoidCallback;
 import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../models/models.dart';
+import '../models/social_models.dart';
 
 class ApiService {
   static const _base = 'https://api.nipino-manabu.com/v1';
@@ -117,6 +118,11 @@ class ApiService {
       return ApiResponse(success:false,error:b['message'],statusCode:res.statusCode); } catch(e){return _err(e);}
   }
   static Future<void> updateFcmToken(String token) async { try{await _put('/user/profile',{'fcm_token':token});}catch(_){} }
+  static Future<ApiResponse<List<UserSearchResult>>> searchUsers(String query) async {
+    try { final res=await _get('/user/search?q=${Uri.encodeQueryComponent(query)}'); final b=jsonDecode(res.body);
+      if(res.statusCode==200) return ApiResponse(success:true,data:(b['users'] as List).map((e)=>UserSearchResult.fromJson(e)).toList(),statusCode:200);
+      return ApiResponse(success:false,error:b['message'],statusCode:res.statusCode); } catch(e){return _err(e);}
+  }
   static Future<ApiResponse<List<AppBadge>>> getBadges() async {
     try { final res=await _get('/user/badges'); final b=jsonDecode(res.body);
       if(res.statusCode==200) return ApiResponse(success:true,data:(b['badges'] as List).map((e)=>AppBadge.fromJson(e)).toList(),statusCode:200);

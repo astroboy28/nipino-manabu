@@ -7,6 +7,7 @@ import '../../theme/app_theme.dart';
 import '../../models/social_models.dart';
 import '../../models/models.dart';
 import '../../services/social_api_service.dart';
+import '../../services/api_service.dart';
 import '../../services/auth_provider.dart';
 import '../../services/sound_service.dart';
 import 'package:flutter/services.dart';
@@ -410,6 +411,7 @@ class _DuelQuizScreenState extends State<DuelQuizScreen>
   Timer?  _pollTimer;
   int     _answerStartMs = 0;
   bool    _duelFinished  = false;
+  bool?   _lastAnswerCorrect;
   DuelRoomState? _latestState;
 
   @override
@@ -482,13 +484,33 @@ class _DuelQuizScreenState extends State<DuelQuizScreen>
         answerMs: elapsed,
       );
     }
-    if (!res.success && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Your answer may not have been recorded — check your connection.'),
-        backgroundColor: AppColors.red,
-        behavior: SnackBarBehavior.floating,
-      ));
+
+    if (!res.success) {
+      // Both attempts failed. duel_answers is keyed by (room, user,
+      // question_order) and used to just keep advancing _currentQ locally
+      // regardless — that permanently skips this order server-side, and
+      // since /duel/answer's "am I finished?" check is a plain answered
+      // count, this user could then never reach question_count answers,
+      // which meant the room could never finalize and both players' coins
+      // stayed locked. Forfeit explicitly instead so the duel ends now.
+      await SocialApiService.forfeitDuel(widget.roomState.room.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Connection lost — you forfeited this duel.'),
+          backgroundColor: AppColors.red,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+      await _pollState();
+      if (mounted) _finishDuel();
+      return;
     }
+
+    // correct_index is withheld by the server while the room is 'active'
+    // (see duel.php handleGetRoom) so an opponent can't read ahead via
+    // /duel/room — is_correct from the answer response is the only
+    // correctness signal available during live play.
+    _lastAnswerCorrect = res.data?['is_correct'] as bool?;
 
     await Future.delayed(const Duration(milliseconds: 1200));
     if (!mounted) return;
@@ -503,6 +525,7 @@ class _DuelQuizScreenState extends State<DuelQuizScreen>
         _currentQ++;
         _selected = null;
         _revealed = false;
+        _lastAnswerCorrect = null;
         _answerStartMs = DateTime.now().millisecondsSinceEpoch;
       });
       if (widget.roomState.room.timedMode) _startTimer();
@@ -642,6 +665,13 @@ class _DuelQuizScreenState extends State<DuelQuizScreen>
                   mainAxisSpacing: 8, crossAxisSpacing: 8,
                   childAspectRatio: 1.7,
                   children: List.generate(options.length, (i) {
+                    // correct_index is only populated once the room is
+                    // 'finished' (anti-cheat — see handleGetRoom) so during
+                    // live play it's always null and this fell back to
+                    // is_correct from the /duel/answer response, which only
+                    // tells us whether the tapped option was right, not
+                    // which one was — so only the tapped option gets
+                    // colored, never a "here's the right answer" reveal.
                     final correctIdx = q['correct_index'] as int?;
                     Color borderColor = AppColors.border;
                     Color bgColor     = AppColors.bg;
@@ -654,6 +684,11 @@ class _DuelQuizScreenState extends State<DuelQuizScreen>
                         borderColor = AppColors.red; bgColor = AppColors.redLight;
                         textColor = AppColors.red;
                       }
+                    } else if (_revealed && correctIdx == null && i == _selected) {
+                      final wasCorrect = _lastAnswerCorrect ?? false;
+                      borderColor = wasCorrect ? AppColors.green : AppColors.red;
+                      bgColor     = wasCorrect ? AppColors.greenLight : AppColors.redLight;
+                      textColor   = wasCorrect ? AppColors.green : AppColors.red;
                     }
                     return GestureDetector(
                       onTap: () => _submitAnswer(i),
@@ -1001,18 +1036,95 @@ class _ParticipantRow extends StatelessWidget {
   );
 }
 
-// Simple user search dialog (stub — wire to user search API)
-class _UserSearchDialog extends StatelessWidget {
+// User search dialog — debounced live search against /user/search,
+// returns the selected user's real id (this used to be a stub that always
+// returned 1 regardless of what was typed, so "invite" silently invited
+// whatever user happened to have id 1 every time).
+class _UserSearchDialog extends StatefulWidget {
   const _UserSearchDialog();
-  @override Widget build(BuildContext context) => AlertDialog(
+  @override State<_UserSearchDialog> createState() => _UserSearchDialogState();
+}
+
+class _UserSearchDialogState extends State<_UserSearchDialog> {
+  final _controller = TextEditingController();
+  Timer?  _debounce;
+  List<UserSearchResult> _results = [];
+  bool    _loading = false;
+  bool    _searched = false;
+
+  @override
+  void dispose() { _debounce?.cancel(); _controller.dispose(); super.dispose(); }
+
+  void _onChanged(String q) {
+    _debounce?.cancel();
+    if (q.trim().length < 2) {
+      setState(() { _results = []; _loading = false; _searched = false; });
+      return;
+    }
+    setState(() => _loading = true);
+    _debounce = Timer(const Duration(milliseconds: 350), () => _search(q.trim()));
+  }
+
+  Future<void> _search(String q) async {
+    final res = await ApiService.searchUsers(q);
+    if (!mounted) return;
+    setState(() {
+      _results  = res.data ?? [];
+      _loading  = false;
+      _searched = true;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
     title: const Text('Invite player'),
-    content: const TextField(
-      decoration: InputDecoration(labelText: 'Search by username'),
+    content: SizedBox(
+      width: double.maxFinite,
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        TextField(
+          controller: _controller,
+          autofocus: true,
+          decoration: InputDecoration(
+            labelText: 'Search by username',
+            suffixIcon: _loading
+                ? const Padding(padding: EdgeInsets.all(12),
+                    child: SizedBox(width: 16, height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2)))
+                : null,
+          ),
+          onChanged: _onChanged,
+        ),
+        const SizedBox(height: 12),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 240),
+          child: _results.isEmpty
+              ? Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  child: Text(
+                    !_searched ? 'Type at least 2 characters'
+                        : _loading ? '' : 'No users found',
+                    style: const TextStyle(color: AppColors.muted, fontSize: 13)),
+                )
+              : ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _results.length,
+                  itemBuilder: (_, i) {
+                    final u = _results[i];
+                    return ListTile(
+                      dense: true,
+                      leading: CircleAvatar(radius: 14, backgroundColor: AppColors.red,
+                          child: Text(u.username[0].toUpperCase(),
+                              style: const TextStyle(color: Colors.white, fontSize: 12))),
+                      title: Text(u.username, style: const TextStyle(fontSize: 14)),
+                      onTap: () => Navigator.pop(context, u.id),
+                    );
+                  },
+                ),
+        ),
+      ]),
     ),
     actions: [
       TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-      ElevatedButton(onPressed: () => Navigator.pop(context, 1),
-          child: const Text('Invite')),
     ],
   );
 }
