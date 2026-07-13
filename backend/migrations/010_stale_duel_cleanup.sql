@@ -1,4 +1,4 @@
--- backend/migrations/009_stale_duel_cleanup.sql
+-- backend/migrations/010_stale_duel_cleanup.sql
 -- ─── Auto-finalize duels that never got a chance to finish ───────────────────
 -- expire_duel_rooms() only ever swept status='waiting' rooms. Once a duel went
 -- 'active' there was no timeout at all: a player who abandons the app mid-duel
