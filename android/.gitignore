@@ -12,3 +12,8 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+
+# Firebase config — contains the project's API key (GitHub secret-scanning
+# flagged it in commit 7011fca). Not committed going forward; regenerate
+# via `flutterfire configure` or download fresh from the Firebase console.
+app/google-services.json
