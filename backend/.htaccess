@@ -56,6 +56,11 @@ RewriteRule ^v1/referral/(.+)$ api/referral.php?action=$1 [QSA,L]
 # Media (image + audio upload)
 RewriteRule ^v1/media/(.+)$ api/media.php?action=$1 [QSA,L]
 
+# Admin panel (admin/index.html calls this with action as a query string,
+# not a path segment, so this route was never added — every admin action
+# 404'd at Apache before ever reaching admin.php's own is_admin check).
+RewriteRule ^v1/admin$ api/admin.php [QSA,L]
+
 # Legal pages (public)
 RewriteRule ^privacy$ api/privacy.php [QSA,L]
 RewriteRule ^terms$ api/terms.php [QSA,L]
