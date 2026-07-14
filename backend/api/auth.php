@@ -124,7 +124,7 @@ function handleLogin(PDO $db, array $body, string $ip): void {
     if (!$user['is_active']) { respond(403,false,'Account suspended. Contact support.'); return; }
     updateStreak($db,(int)$user['id'],$user['last_quiz_date']);
     [$access,$refresh]=issueTokens($db,(int)$user['id'],$user['username']);
-    $fresh=$db->prepare('SELECT id,uuid,username,email,coins,streak_days,current_level,total_score,is_verified,created_at FROM users WHERE id=?');
+    $fresh=$db->prepare('SELECT id,uuid,username,email,coins,streak_days,current_level,total_score,is_verified,is_admin,created_at FROM users WHERE id=?');
     $fresh->execute([$user['id']]);
     $u=$fresh->fetch();
     $resp=['user'=>formatUser($u),'access_token'=>$access,'refresh_token'=>$refresh,'email_verified'=>(bool)$u['is_verified']];
@@ -219,10 +219,17 @@ function updateStreak(PDO $db, int $uid, ?string $last): void {
 }
 
 function formatUser(array $u): array {
+    // is_admin used to be missing here entirely — the live admin panel's
+    // login JS checks data.user.is_admin and shows "No admin access." when
+    // it's falsy, so every admin login looked like a rejection regardless
+    // of whether the password was correct. Defaults to false via ?? so this
+    // still works for handleRegister's RETURNING row, which doesn't select
+    // is_admin (new accounts are never admins).
     return ['id'=>(int)$u['id'],'username'=>$u['username'],'email'=>$u['email'],
             'coins'=>(int)$u['coins'],'streak_days'=>(int)$u['streak_days'],
             'current_level'=>$u['current_level'],'total_score'=>(int)$u['total_score'],
-            'is_verified'=>(bool)($u['is_verified']??false),'created_at'=>$u['created_at']];
+            'is_verified'=>(bool)($u['is_verified']??false),
+            'is_admin'=>(bool)($u['is_admin']??false),'created_at'=>$u['created_at']];
 }
 
 function respond(int $code, bool $ok, string $msg, array $data=[]): void {
