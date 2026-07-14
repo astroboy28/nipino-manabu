@@ -10,6 +10,7 @@ import '../../services/social_api_service.dart';
 import '../../services/api_service.dart';
 import '../../services/auth_provider.dart';
 import '../../services/sound_service.dart';
+import '../../widgets/quiz_media_widget.dart';
 import 'package:flutter/services.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -485,14 +486,40 @@ class _DuelQuizScreenState extends State<DuelQuizScreen>
       );
     }
 
+    if (!res.success && res.statusCode == 409) {
+      // duel_answers is unique on (room, user, question_order) — a 409 here
+      // means this question_order was already recorded server-side, almost
+      // always because our *first* attempt actually landed and only its
+      // response was lost (the retry above is what surfaced the 409).
+      // The answer already counted; forfeiting over it would cost the user
+      // a duel they didn't actually fail. Resync from the server and
+      // continue instead — _pollState() already calls _finishDuel() if the
+      // room is finished (e.g. this was the last question), so guard the
+      // local advance on that.
+      await _pollState();
+      if (!mounted || _duelFinished) return;
+      if (_currentQ + 1 < widget.roomState.questions.length) {
+        setState(() {
+          _currentQ++;
+          _selected = null;
+          _revealed = false;
+          _lastAnswerCorrect = null;
+          _answerStartMs = DateTime.now().millisecondsSinceEpoch;
+        });
+        if (widget.roomState.room.timedMode) _startTimer();
+      }
+      return;
+    }
+
     if (!res.success) {
-      // Both attempts failed. duel_answers is keyed by (room, user,
-      // question_order) and used to just keep advancing _currentQ locally
-      // regardless — that permanently skips this order server-side, and
-      // since /duel/answer's "am I finished?" check is a plain answered
-      // count, this user could then never reach question_count answers,
-      // which meant the room could never finalize and both players' coins
-      // stayed locked. Forfeit explicitly instead so the duel ends now.
+      // Both attempts failed for a real reason (not a duplicate-answer
+      // conflict). duel_answers is keyed by (room, user, question_order)
+      // and used to just keep advancing _currentQ locally regardless —
+      // that permanently skips this order server-side, and since
+      // /duel/answer's "am I finished?" check is a plain answered count,
+      // this user could then never reach question_count answers, which
+      // meant the room could never finalize and both players' coins stayed
+      // locked. Forfeit explicitly instead so the duel ends now.
       await SocialApiService.forfeitDuel(widget.roomState.room.id);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -636,6 +663,20 @@ class _DuelQuizScreenState extends State<DuelQuizScreen>
 
             Expanded(
               child: ListView(padding: const EdgeInsets.all(16), children: [
+                // Audio player (listening questions) — duel.php's handleGetRoom
+                // now selects audio_url/image_url/media_credit alongside the
+                // other question fields; this screen just never rendered them.
+                if ((q['audio_url'] as String?)?.isNotEmpty == true) ...[
+                  QuizAudioWidget(
+                      key: ValueKey('audio_$_currentQ'),
+                      url: q['audio_url'] as String, autoPlay: false),
+                  const SizedBox(height: 12),
+                ] else if ((q['image_url'] as String?)?.isNotEmpty == true) ...[
+                  QuizImageWidget(
+                      url: q['image_url'] as String,
+                      credit: q['media_credit'] as String?),
+                  const SizedBox(height: 12),
+                ],
                 // Question card
                 Container(
                   padding: const EdgeInsets.all(24),

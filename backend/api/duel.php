@@ -566,7 +566,7 @@ function handleGetRoom(PDO $db): void {
         $qRes   = $db->query(
             "SELECT id, question_text, question_type, options,
                CASE WHEN '{$room['status']}'='finished' THEN correct_index ELSE NULL END AS correct_index,
-               point_value, memory_tip
+               point_value, memory_tip, image_url, audio_url, media_credit
              FROM quiz_questions WHERE id IN ($inList)"
         );
         $qMap = [];
