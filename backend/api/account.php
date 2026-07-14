@@ -27,6 +27,10 @@ match (true) {
     $method === 'POST'   && $action === 'request-deletion'  => handleRequestDeletion($db, $ip),
     $method === 'POST'   && $action === 'confirm-deletion'  => handleConfirmDeletion($db),
     $method === 'DELETE' && $action === 'cancel-deletion'   => handleCancelDeletion($db),
+    // Unauthenticated — reached from the emailed "Cancel Deletion" link,
+    // which by definition must work even when the session that requested
+    // deletion has long since expired (see migration 012).
+    $method === 'POST'   && $action === 'confirm-cancel-deletion' => handleConfirmCancelDeletion($db, $ip),
     $method === 'GET'    && $action === 'export'            => handleExport($db),
     default => respond(404, false, 'Endpoint not found'),
 };
@@ -86,11 +90,22 @@ function handleRequestDeletion(PDO $db, string $ip): void {
          WHERE user_id = ? AND revoked_at IS NULL'
     )->execute([$userId]);
 
+    // Token-based cancel link, valid the full 30-day grace period —
+    // is_active=FALSE above blocks login/refresh immediately, so the
+    // already-live access token (15 min TTL) is otherwise the only way
+    // back in. Same pattern as password_reset_tokens.
+    $cancelToken = bin2hex(random_bytes(32));
+    $db->prepare(
+        "INSERT INTO deletion_cancel_tokens (user_id, token_hash, expires_at)
+         VALUES (?, ?, ?)"
+    )->execute([$userId, hash('sha256', $cancelToken), $deleteAt]);
+
     // Email confirmation with cancel link
-    _sendDeletionScheduledEmail(
+    Mailer::sendDeletionScheduled(
         $user['email'],
         $user['username'],
-        $deleteAt
+        $deleteAt,
+        $cancelToken
     );
 
     Monitor::info('account_deletion', 'Deletion scheduled', [
@@ -214,12 +229,67 @@ function handleCancelDeletion(PDO $db): void {
         respond(404, false, 'No pending deletion found for this account.'); return;
     }
 
+    // Invalidate any outstanding emailed cancel token — this session-based
+    // path already did the job it would have done.
+    $db->prepare('UPDATE deletion_cancel_tokens SET used=TRUE WHERE user_id=? AND used=FALSE')
+       ->execute([$userId]);
+
     // Notify by email that deletion was cancelled
-    _sendDeletionCancelledEmail($user['email'], $user['username']);
+    Mailer::sendDeletionCancelled($user['email'], $user['username']);
 
     Monitor::info('account_deletion', 'Deletion cancelled', [], $userId);
     respond(200, true,
         'Account deletion cancelled. Your account has been fully restored.');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CONFIRM CANCEL DELETION (via emailed token) — no session required
+// POST /v1/account/confirm-cancel-deletion  { "token": "..." }
+// ════════════════════════════════════════════════════════════════════════════
+function handleConfirmCancelDeletion(PDO $db, string $ip): void {
+    RateLimiter::enforce($ip, 'confirm_cancel_deletion', 10, 3600);
+
+    $body  = Auth::getJsonBody();
+    $token = (string) ($body['token'] ?? '');
+    if (!$token) { respond(422, false, 'Token required.'); return; }
+
+    $tokHash = hash('sha256', $token);
+    $stmt = $db->prepare(
+        'SELECT dct.id, dct.user_id, u.email, u.username
+         FROM deletion_cancel_tokens dct
+         JOIN users u ON u.id = dct.user_id
+         WHERE dct.token_hash = ? AND dct.expires_at > NOW() AND dct.used = FALSE
+         LIMIT 1'
+    );
+    $stmt->execute([$tokHash]);
+    $row = $stmt->fetch();
+    if (!$row) { respond(400, false, 'Link invalid or expired.'); return; }
+
+    $db->beginTransaction();
+    try {
+        $db->prepare(
+            'UPDATE users
+             SET deletion_scheduled_at = NULL,
+                 is_active             = TRUE
+             WHERE id = ? AND deletion_scheduled_at IS NOT NULL'
+        )->execute([$row['user_id']]);
+
+        $db->prepare('UPDATE deletion_cancel_tokens SET used=TRUE WHERE id=?')
+           ->execute([$row['id']]);
+
+        $db->commit();
+    } catch (\Exception $e) {
+        $db->rollBack();
+        Monitor::error('account_deletion', 'Token cancel failed: ' . $e->getMessage(),
+            [], $row['user_id']);
+        respond(500, false, 'Cancellation failed. Try again.'); return;
+    }
+
+    Mailer::sendDeletionCancelled($row['email'], $row['username']);
+
+    Monitor::info('account_deletion', 'Deletion cancelled via emailed token', [], $row['user_id']);
+    respond(200, true,
+        'Account deletion cancelled. Your account has been fully restored — sign in normally.');
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -322,45 +392,6 @@ function handleExport(PDO $db): void {
         date('Ymd_His') . '.json"');
     http_response_code(200);
     echo json_encode($export, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
-}
-
-// ── Email helpers ─────────────────────────────────────────────────────────────
-function _sendDeletionScheduledEmail(
-    string $to, string $username, string $deleteAt
-): void {
-    $cancelUrl = 'https://nipino-manabu.com/account/cancel-deletion';
-    $html = <<<HTML
-<h2 style="color:#111;font-family:sans-serif;">Account deletion scheduled</h2>
-<p style="font-family:sans-serif;color:#555;font-size:14px;">
-  Hello {$username},<br><br>
-  We received a request to permanently delete your Nipino-Manabu account.
-  Your account has been deactivated and all data will be permanently deleted on
-  <strong>{$deleteAt} UTC</strong>.
-</p>
-<p style="font-family:sans-serif;color:#555;font-size:14px;">
-  Changed your mind? You can cancel this within 30 days:
-</p>
-<p style="text-align:center;padding:20px 0;">
-  <a href="{$cancelUrl}" style="background:#CC0000;color:white;padding:12px 28px;
-     text-decoration:none;border-radius:6px;font-family:sans-serif;
-     font-weight:700;font-size:14px;">Cancel Deletion</a>
-</p>
-<p style="font-family:sans-serif;color:#888;font-size:12px;">
-  If you did not request this, contact us immediately at
-  support@nipino-manabu.com
-</p>
-HTML;
-    $text = "Hello $username,\n\nYour Nipino-Manabu account is scheduled for deletion on $deleteAt UTC.\n"
-          . "To cancel: $cancelUrl\n\nIf you did not request this, contact support@nipino-manabu.com\n";
-    // Use Mailer's internal send — wrap in a minimal HTML page
-    $subject = 'Account deletion scheduled — Nipino-Manabu';
-    // Direct cURL SMTP call via Mailer static method pattern
-    // (call sendPasswordReset as a pattern — in production extract send() to public)
-    error_log("DELETION EMAIL to $to: scheduled $deleteAt — send via SMTP");
-}
-
-function _sendDeletionCancelledEmail(string $to, string $username): void {
-    error_log("DELETION CANCELLED EMAIL to $to for user $username");
 }
 
 function respond(int $code, bool $ok, string $msg, array $data = []): void {

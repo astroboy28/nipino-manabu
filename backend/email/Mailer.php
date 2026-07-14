@@ -235,7 +235,70 @@ HTML, 'Reset your Nipino-Manabu password');
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // 3. STREAK REMINDER (sent by cron when streak is at risk)
+    // 3. ACCOUNT DELETION SCHEDULED — cancel link is a token, not a session,
+    // so it stays valid for the full 30-day grace period even after the
+    // access token that requested deletion has long since expired.
+    // ══════════════════════════════════════════════════════════════════════════
+    public static function sendDeletionScheduled(
+        string $to, string $username, string $deleteAt, string $cancelToken
+    ): bool {
+        $url  = "https://nipino-manabu.com/cancel-deletion?token=" . urlencode($cancelToken);
+        $html = self::wrap(<<<HTML
+<h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111;">
+  Account deletion scheduled</h1>
+<p style="margin:0 0 8px;font-size:14px;color:#555;line-height:1.6;">
+  Hello {$username},</p>
+<p style="margin:0 0 24px;font-size:14px;color:#555;line-height:1.6;">
+  We received a request to permanently delete your Nipino-Manabu account.
+  Your account has been deactivated and all data will be permanently deleted on
+  <strong>{$deleteAt} UTC</strong>.</p>
+<p style="margin:0 0 8px;font-size:14px;color:#555;line-height:1.6;">
+  Changed your mind? You can cancel this any time in the next 30 days:</p>
+<table width="100%" cellpadding="0" cellspacing="0">
+  <tr><td align="center" style="padding:8px 0 28px;">
+    <a href="{$url}" style="display:inline-block;background:#CC0000;color:white;
+      text-decoration:none;font-size:14px;font-weight:700;padding:14px 36px;
+      border-radius:6px;">Cancel Deletion</a>
+  </td></tr>
+</table>
+<p style="margin:0;font-size:12px;color:#888;">
+  If you did not request this, contact us immediately at
+  support@nipino-manabu.com — this link cancels the deletion without
+  requiring you to sign back in.</p>
+HTML, 'Cancel your scheduled account deletion');
+
+        $text = "Account deletion scheduled — Nipino-Manabu\n\n"
+              . "Hello $username,\n\n"
+              . "Your account is scheduled for permanent deletion on $deleteAt UTC.\n"
+              . "To cancel: $url\n\n"
+              . "If you did not request this, contact support@nipino-manabu.com\n";
+
+        return self::send($to, $username,
+            'Account deletion scheduled — Nipino-Manabu', $html, $text);
+    }
+
+    public static function sendDeletionCancelled(string $to, string $username): bool {
+        $html = self::wrap(<<<HTML
+<h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111;">
+  Account deletion cancelled</h1>
+<p style="margin:0 0 24px;font-size:14px;color:#555;line-height:1.6;">
+  Hello {$username}, your Nipino-Manabu account has been fully restored.
+  Your data was not deleted and your account is active again — sign in
+  normally to continue.</p>
+<p style="margin:0;font-size:12px;color:#888;">
+  If you did not request this, contact us at support@nipino-manabu.com</p>
+HTML, 'Your account deletion was cancelled');
+
+        $text = "Account deletion cancelled — Nipino-Manabu\n\n"
+              . "Hello $username, your account has been fully restored.\n"
+              . "If you did not request this, contact support@nipino-manabu.com\n";
+
+        return self::send($to, $username,
+            'Account deletion cancelled — Nipino-Manabu', $html, $text);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // 4. STREAK REMINDER (sent by cron when streak is at risk)
     // ══════════════════════════════════════════════════════════════════════════
     public static function sendStreakReminder(
         string $to, string $username, int $streak
@@ -268,7 +331,7 @@ HTML, "You have a $streak-day streak — don't lose it!");
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // 4. WELCOME (after email verified)
+    // 5. WELCOME (after email verified)
     // ══════════════════════════════════════════════════════════════════════════
     public static function sendWelcome(string $to, string $username): bool {
         $html = self::wrap(<<<HTML
