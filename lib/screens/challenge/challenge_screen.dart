@@ -9,6 +9,7 @@ import '../../models/models.dart';
 import '../../services/social_api_service.dart';
 import '../../services/api_service.dart';
 import '../../services/auth_provider.dart';
+import '../../widgets/quiz_media_widget.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Challenge list hub
@@ -586,12 +587,26 @@ class _ChallengeQuizScreenState extends State<ChallengeQuizScreen> {
       for (var i = 0; i < _questions.length; i++)
         {'question_id': _questions[i].id, 'chosen_index': _chosenIndices[i]},
     ];
-    await SocialApiService.submitChallengeResult(
+    final res = await SocialApiService.submitChallengeResult(
       eventId:     widget.event.id,
       answers:     answers,
       timeTakenMs: _totalMs,
     );
     if (!mounted) return;
+    // The result was never checked here before — a rejected submission
+    // (e.g. 409 "already submitted" from retaking a finished challenge, or
+    // a real network failure) still landed on the result screen showing
+    // the client-computed score as if it had been recorded server-side.
+    if (!res.success) {
+      setState(() => _submitting = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(res.error ?? 'Failed to submit your result.'),
+        backgroundColor: AppColors.red,
+        behavior: SnackBarBehavior.floating,
+      ));
+      Navigator.pop(context);
+      return;
+    }
     Navigator.pushReplacement(context, MaterialPageRoute(
       builder: (_) => ChallengeResultScreen(
         event:        widget.event,
@@ -699,6 +714,20 @@ class _ChallengeQuizScreenState extends State<ChallengeQuizScreen> {
             Expanded(
               child: ListView(
                   padding: const EdgeInsets.all(16), children: [
+                // Audio player (listening questions) — challenge questions
+                // come from the same /quiz/questions endpoint as the regular
+                // practice quiz, so audio_url/image_url are already present;
+                // this screen just never rendered them.
+                if (q.hasAudio) ...[
+                  QuizAudioWidget(
+                      key: ValueKey('audio_$_currentQ'),
+                      url: q.audioUrl!, autoPlay: false),
+                  const SizedBox(height: 12),
+                ],
+                if (q.hasImage && !q.hasAudio) ...[
+                  QuizImageWidget(url: q.imageUrl!, credit: q.mediaCredit),
+                  const SizedBox(height: 12),
+                ],
                 // Question card
                 Container(
                   padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),

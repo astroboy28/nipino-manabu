@@ -58,14 +58,6 @@ function handleClaim(PDO $db): void {
 
     if (!$refCode) { respond(422, false, 'Referral code required.'); return; }
 
-    // Check new user hasn't already claimed
-    $chkStmt = $db->prepare('SELECT referred_by_id FROM users WHERE id=?');
-    $chkStmt->execute([$newUserId]);
-    $chk = $chkStmt->fetch();
-    if ($chk['referred_by_id']) {
-        respond(409, false, 'Referral already claimed.'); return;
-    }
-
     // Find referrer
     $refStmt = $db->prepare(
         'SELECT id, username FROM users WHERE referral_code=? AND is_active=TRUE'
@@ -80,6 +72,19 @@ function handleClaim(PDO $db): void {
 
     $db->beginTransaction();
     try {
+        // Lock the new user's row and re-check referred_by_id inside the
+        // transaction — the earlier plain SELECT could go stale under
+        // concurrency (e.g. a double-tap or client retry firing two claim
+        // requests together), letting both pass the check and double-grant
+        // coins to both the new user and the referrer.
+        $lockStmt = $db->prepare('SELECT referred_by_id FROM users WHERE id=? FOR UPDATE');
+        $lockStmt->execute([$newUserId]);
+        $locked = $lockStmt->fetch();
+        if ($locked['referred_by_id']) {
+            $db->rollBack();
+            respond(409, false, 'Referral already claimed.'); return;
+        }
+
         // Mark new user as referred
         $db->prepare(
             'UPDATE users SET referred_by_id=? WHERE id=?'

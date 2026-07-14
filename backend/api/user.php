@@ -173,6 +173,27 @@ function handleUpdateProfile(PDO $db): void {
         $updates[] = 'fcm_token=?'; $params[] = $token;
     }
 
+    // Client PUTs these two fields from the quiz-preferences screen, but
+    // they were never in this whitelist — the DB columns exist (migration
+    // 004) and the request itself "succeeds" with 422 "Nothing to update"
+    // being silently ignored client-side, so the setting only ever lived in
+    // local SharedPreferences and never synced across devices/reinstalls.
+    // The client's "Relaxed" preset sends {timed_mode: false, seconds_per_q:
+    // 0} — 0 is just a placeholder for "timer off" and would violate the
+    // column's BETWEEN 5 AND 60 check, so skip writing seconds_per_q
+    // whenever this same request is turning timed mode off.
+    $timedModeVal = isset($body['quiz_timed_mode']) ? (bool)$body['quiz_timed_mode'] : null;
+    if (isset($body['quiz_timed_mode'])) {
+        $updates[] = 'quiz_timed_mode=?';
+        $params[]  = $timedModeVal ? 'true' : 'false';
+    }
+    if (isset($body['quiz_seconds_per_q']) && $timedModeVal !== false) {
+        $secs = (int)$body['quiz_seconds_per_q'];
+        if ($secs < 5 || $secs > 60) { respond(422, false, 'Seconds per question must be 5–60.'); return; }
+        $updates[] = 'quiz_seconds_per_q=?';
+        $params[]  = $secs;
+    }
+
     if (empty($updates)) { respond(422, false, 'Nothing to update.'); return; }
 
     $params[] = $userId;

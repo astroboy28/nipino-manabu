@@ -220,10 +220,35 @@ function handleJoin(PDO $db): void {
                                               { respond(409, false, 'Challenge is full.'); return; }
     if (strtotime($event['ends_at']) < time()) { respond(410, false, 'Challenge has ended.'); return; }
 
-    $db->prepare(
-        'INSERT INTO challenge_participants (event_id, user_id) VALUES (?,?)
-         ON CONFLICT DO NOTHING'
-    )->execute([$eventId, $userId]);
+    $db->beginTransaction();
+    try {
+        // Lock the event row so concurrent joins serialize instead of both
+        // reading the same stale "joined < max_participants" snapshot — same
+        // race class as duel_rooms joins (see duel.php handleJoin): without
+        // this, joiners racing for the last slot(s) could overfill the event.
+        $lockStmt = $db->prepare(
+            'SELECT ce.max_participants,
+               (SELECT COUNT(*) FROM challenge_participants WHERE event_id=ce.id) AS joined
+             FROM challenge_events ce WHERE ce.id=? FOR UPDATE'
+        );
+        $lockStmt->execute([$eventId]);
+        $locked = $lockStmt->fetch();
+        if (!$locked || (int)$locked['joined'] >= (int)$locked['max_participants']) {
+            $db->rollBack();
+            respond(409, false, 'Challenge is full.'); return;
+        }
+
+        $db->prepare(
+            'INSERT INTO challenge_participants (event_id, user_id) VALUES (?,?)
+             ON CONFLICT DO NOTHING'
+        )->execute([$eventId, $userId]);
+
+        $db->commit();
+    } catch (\Exception $e) {
+        $db->rollBack();
+        Monitor::error('challenge_join', $e->getMessage(), [], $userId);
+        respond(500, false, 'Failed to join challenge.'); return;
+    }
 
     respond(200, true, 'Joined challenge.', ['event_id' => $eventId]);
 }
@@ -422,11 +447,16 @@ function handleAdminFinalize(PDO $db): void {
 // PUBLIC: LIST CHALLENGES
 // ════════════════════════════════════════════════════════════════════════════
 function handleList(PDO $db): void {
-    Auth::requireAuth();
+    $claims = Auth::requireAuth();
+    $userId = (int) $claims['sub'];
     $status = Auth::sanitizeString($_GET['status'] ?? 'active', 20);
     $validStatuses = ['upcoming','active','finished'];
     if (!in_array($status, $validStatuses, true)) $status = 'active';
 
+    // user_joined / user_completed were missing here (only handleGet had
+    // them) — the app's list/detail screens never call handleGet, so
+    // ChallengeEvent.userCompleted was always false client-side, letting a
+    // user who already finished an active challenge "rejoin" and retake it.
     $stmt = $db->prepare(
         "SELECT ce.id, ce.uuid, ce.title, ce.description,
                 ce.level, ce.category, ce.prize_coins,
@@ -434,14 +464,17 @@ function handleList(PDO $db): void {
                 ce.status, ce.featured, ce.starts_at, ce.ends_at,
                 ce.max_participants,
                 (SELECT COUNT(*) FROM challenge_participants WHERE event_id=ce.id) AS joined_count,
-                wu.username AS winner_username
+                wu.username AS winner_username,
+                (SELECT id FROM challenge_participants WHERE event_id=ce.id AND user_id=?) AS user_joined,
+                (SELECT completed_at IS NOT NULL FROM challenge_participants
+                 WHERE event_id=ce.id AND user_id=? LIMIT 1) AS user_completed
          FROM challenge_events ce
          LEFT JOIN users wu ON wu.id=ce.winner_user_id
          WHERE ce.status=?
          ORDER BY ce.featured DESC, ce.starts_at ASC
          LIMIT 20"
     );
-    $stmt->execute([$status]);
+    $stmt->execute([$userId, $userId, $status]);
     $events = $stmt->fetchAll();
     respond(200, true, 'Challenges fetched.', ['events' => $events]);
 }
@@ -450,14 +483,18 @@ function handleList(PDO $db): void {
 // PUBLIC: GET FEATURED CHALLENGE (for home screen)
 // ════════════════════════════════════════════════════════════════════════════
 function handleFeatured(PDO $db): void {
-    Auth::requireAuth();
-    $stmt = $db->query(
+    $claims = Auth::requireAuth();
+    $userId = (int) $claims['sub'];
+    $stmt = $db->prepare(
         "SELECT ce.id, ce.uuid, ce.title, ce.description,
                 ce.level, ce.prize_coins, ce.prize_badge_emoji,
                 ce.status, ce.starts_at, ce.ends_at,
                 ce.seconds_per_q, ce.question_count,
                 wu.username AS winner_username,
-                wu.id AS winner_id
+                wu.id AS winner_id,
+                (SELECT id FROM challenge_participants WHERE event_id=ce.id AND user_id=?) AS user_joined,
+                (SELECT completed_at IS NOT NULL FROM challenge_participants
+                 WHERE event_id=ce.id AND user_id=? LIMIT 1) AS user_completed
          FROM challenge_events ce
          LEFT JOIN users wu ON wu.id=ce.winner_user_id
          WHERE ce.featured=TRUE
@@ -466,6 +503,7 @@ function handleFeatured(PDO $db): void {
            ce.starts_at DESC
          LIMIT 1"
     );
+    $stmt->execute([$userId, $userId]);
     $event = $stmt->fetch();
     respond(200, true, 'Featured challenge fetched.',
         ['event' => $event ?: null]);

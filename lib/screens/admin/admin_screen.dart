@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../../services/api_service.dart';
+import '../../services/social_api_service.dart';
+import '../../models/social_models.dart';
 import '../../theme/app_theme.dart';
 
 class AdminScreen extends StatefulWidget {
@@ -319,15 +321,18 @@ class FinalizeChallengeScreen extends StatefulWidget {
 
 class _FinalizeChallengeScreenState
     extends State<FinalizeChallengeScreen> {
-  List<dynamic> _events = [];
+  List<ChallengeEvent> _events = [];
   bool _loading = true;
 
   @override void initState() { super.initState(); _load(); }
 
   Future<void> _load() async {
-    //final res = await ApiService.get('active');
-    if (mounted) setState(() {
-      _events = [];
+    // Was a permanent stub (_events always []) — this screen could never
+    // actually list anything to finalize.
+    final res = await SocialApiService.listChallenges('active');
+    if (!mounted) return;
+    setState(() {
+      _events  = res.data ?? [];
       _loading = false;
     });
   }
@@ -377,7 +382,7 @@ class _FinalizeChallengeScreenState
                   padding: const EdgeInsets.all(16),
                   itemCount: _events.length,
                   itemBuilder: (_, i) {
-                    final e = _events[i] as dynamic;
+                    final e = _events[i];
                     return Container(
                       margin: const EdgeInsets.only(bottom: 8),
                       padding: const EdgeInsets.all(14),
@@ -389,17 +394,17 @@ class _FinalizeChallengeScreenState
                         Expanded(child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                          Text(e['title'],
+                          Text(e.title,
                               style: const TextStyle(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w700)),
-                          Text('${e['joined_count']} participants · '
-                              '${e['prize_coins']} coins prize',
+                          Text('${e.joinedCount} participants · '
+                              '${e.prizeCoins} coins prize',
                               style: const TextStyle(
                                   fontSize: 11, color: AppColors.muted)),
                         ])),
                         ElevatedButton(
-                          onPressed: () => _finalize(e['id'], e['title']),
+                          onPressed: () => _finalize(e.id, e.title),
                           style: ElevatedButton.styleFrom(
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 14, vertical: 8)),
