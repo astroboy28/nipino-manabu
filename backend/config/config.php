@@ -59,6 +59,7 @@ return [
         'N5' => 10, 'N4' => 15, 'N3' => 20, 'N2' => 25, 'N1' => 30,
         'streak_bonus'   => 10,
         'perfect_bonus'  => 25,
+        'wrong_answer_penalty' => 10,
     ],
 
     // ── IAP product → coins mapping ───────────────────────────────────────────

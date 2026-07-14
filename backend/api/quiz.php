@@ -14,15 +14,33 @@ match(true){
     default => respond(404,false,'Endpoint not found'),
 };
 function handleGetQuestions(PDO $db):void{
-    Auth::requireAuth();
+    $claims=Auth::requireAuth(); $userId=(int)$claims['sub'];
     $level=Auth::sanitizeString($_GET['level']??'N5',2);
     $category=Auth::sanitizeString($_GET['category']??'kanji',20);
     $count=max(1,min((int)($_GET['count']??10),20)); // FIX: min 1, max 20
     $validL=['N1','N2','N3','N4','N5']; $validC=['kanji','vocabulary','grammar','listening'];
     if(!in_array($level,$validL,true)){respond(422,false,'Invalid level.'); return;}
     if(!in_array($category,$validC,true)){respond(422,false,'Invalid category.'); return;}
+
+    // Wrong answers cost coins (see handleSubmit's quiz_wrong_penalty) — once
+    // a user is at 0, block starting a new quiz until they top up rather than
+    // letting them keep grinding at a balance that can never go negative
+    // anyway (handleSubmit floors it at 0).
+    $balStmt=$db->prepare('SELECT coins FROM users WHERE id=?');
+    $balStmt->execute([$userId]);
+    $bal=(int)($balStmt->fetch()['coins']??0);
+    if($bal<=0){
+        respond(402,false,"You're out of coins. Purchase more coins to keep taking quizzes.",['current_balance'=>$bal]);
+        return;
+    }
+    // image_url/audio_url/media_credit exist on this table since migration
+    // 006 but were never added here — every listening question silently had
+    // no audio at all (QuizQuestion.hasAudio was always false client-side,
+    // so the player widget never even mounted; not a playback failure, the
+    // data just never reached the app).
     $stmt=$db->prepare('SELECT id,level,category,question_text,question_type,
-        options,correct_index,explanation,memory_tip,point_value
+        options,correct_index,explanation,memory_tip,point_value,
+        image_url,audio_url,media_credit
         FROM quiz_questions WHERE level=? AND category=? AND is_active=TRUE
         ORDER BY RANDOM() LIMIT ?');
     $stmt->execute([$level,$category,$count]);
@@ -45,7 +63,13 @@ function handleSubmit(PDO $db):void{
     $timeTaken=(int)($body['time_taken_seconds']??0);
     $rawAnswers=is_array($body['answers']??null)?$body['answers']:[];
     $validL=['N1','N2','N3','N4','N5'];
+    $validC=['kanji','vocabulary','grammar','listening'];
     if(!in_array($level,$validL,true)){respond(422,false,'Invalid data.'); return;}
+    // Unvalidated category used to flow straight into quiz_results, and the
+    // level-exam unlock below counts DISTINCT category at >=80% — submitting
+    // real questions tagged with made-up category strings could inflate that
+    // count past 4 and unlock the level exam without passing all real categories.
+    if(!in_array($category,$validC,true)){respond(422,false,'Invalid data.'); return;}
 
     // Never trust a client-submitted score — re-derive correct_count/total_count
     // server-side from the real answer key. Dedupe by question_id so the same
@@ -77,15 +101,33 @@ function handleSubmit(PDO $db):void{
 
     $cfg=require dirname(__DIR__).'/config/config.php';
     $coinPerQ=$cfg['coins'][$level]??10; $streakBonus=0; $perfectBonus=0;
+    $wrongPenalty=(int)($cfg['coins']['wrong_answer_penalty']??10);
     $uStmt=$db->prepare('SELECT streak_days,last_quiz_date FROM users WHERE id=?');
     $uStmt->execute([$userId]); $uRow=$uStmt->fetch();
     if($uRow&&(int)$uRow['streak_days']>=7) $streakBonus=$cfg['coins']['streak_bonus'];
     if($correctCount===$totalCount) $perfectBonus=$cfg['coins']['perfect_bonus'];
     $coinsEarned=($correctCount*$coinPerQ)+$streakBonus+$perfectBonus;
+    $wrongCount=$totalCount-$correctCount;
+    $coinsLost=$wrongCount*$wrongPenalty;
     $db->prepare('INSERT INTO quiz_results (user_id,level,category,correct_count,total_count,time_taken_seconds,coins_earned) VALUES (?,?,?,?,?,?,?)')
        ->execute([$userId,$level,$category,$correctCount,$totalCount,$timeTaken,$coinsEarned]);
-    $db->prepare('UPDATE users SET coins=coins+?,total_score=total_score+?,last_quiz_date=CURRENT_DATE WHERE id=?')
-       ->execute([$coinsEarned,$correctCount*$coinPerQ,$userId]);
+    // Single atomic update for the net coin change, floored at 0 — a bad
+    // quiz can zero out a balance but never push it negative (matches the
+    // handleGetQuestions gate above, which blocks starting a new quiz at 0).
+    $balUpd=$db->prepare('UPDATE users SET coins=GREATEST(0,coins+?-?),total_score=total_score+?,last_quiz_date=CURRENT_DATE WHERE id=? RETURNING coins');
+    $balUpd->execute([$coinsEarned,$coinsLost,$correctCount*$coinPerQ,$userId]);
+    $newBal=(int)($balUpd->fetch()['coins']??0);
+    // Recorded as two separate ledger rows (reward vs penalty), matching how
+    // every other coin movement in this app is itemised. Both reference the
+    // same post-update balance since they're applied together atomically.
+    if($coinsEarned>0){
+        $db->prepare("INSERT INTO coin_transactions (user_id,amount,balance_after,type,description) VALUES (?,?,?,'quiz_reward',?)")
+           ->execute([$userId,$coinsEarned,$newBal,"Quiz reward — $level $category ($correctCount/$totalCount correct)"]);
+    }
+    if($coinsLost>0){
+        $db->prepare("INSERT INTO coin_transactions (user_id,amount,balance_after,type,description) VALUES (?,?,?,'quiz_wrong_penalty',?)")
+           ->execute([$userId,-$coinsLost,$newBal,"Quiz penalty — $wrongCount wrong answer(s) in $level $category"]);
+    }
     $today=date('Y-m-d'); $yday=date('Y-m-d',strtotime('-1 day')); $last=$uRow['last_quiz_date']??null;
     if($last!==$today) $db->prepare($last===$yday
         ?'UPDATE users SET streak_days=streak_days+1 WHERE id=?'
@@ -110,7 +152,7 @@ function handleSubmit(PDO $db):void{
     }
     $u=$db->prepare('SELECT coins,streak_days FROM users WHERE id=?');
     $u->execute([$userId]); $ud=$u->fetch();
-    respond(200,true,'Result saved.',['coins_earned'=>$coinsEarned,'streak_bonus'=>$streakBonus,
+    respond(200,true,'Result saved.',['coins_earned'=>$coinsEarned,'coins_lost'=>$coinsLost,'streak_bonus'=>$streakBonus,
         'perfect_bonus'=>$perfectBonus,'total_coins'=>(int)$ud['coins'],
         'streak_days'=>(int)$ud['streak_days'],'new_badges'=>$newBadges]);
 }
@@ -119,7 +161,7 @@ function checkBadges(PDO $db,int $uid,string $level,int $correct,int $total,int 
     $bs=$db->prepare('SELECT b.* FROM badges b WHERE b.id NOT IN (SELECT badge_id FROM user_badges WHERE user_id=?)');
     $bs->execute([$uid]); $candidates=$bs->fetchAll();
     $ss=$db->prepare('SELECT streak_days,coins,(SELECT COUNT(*) FROM quiz_results WHERE user_id=?) AS qc FROM users WHERE id=?');
-    $ss->execute([$uid]); $stats=$ss->fetch();
+    $ss->execute([$uid,$uid]); $stats=$ss->fetch();
     $pct=$total>0?($correct/$total)*100:0;
     foreach($candidates as $b){
         $c=json_decode($b['condition'],true); $t=$c['type']??''; $v=$c['value']??0; $ok=false;

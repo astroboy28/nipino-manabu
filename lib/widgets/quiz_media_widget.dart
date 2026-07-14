@@ -55,8 +55,9 @@ class QuizImageWidget extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Audio player widget — for 'listening' type questions
-// Auto-plays when the question appears; user can replay manually.
+// Audio player widget — for 'listening' type questions.
+// Playback is user-initiated only (tap the play button) — never autoplays,
+// so the question doesn't start speaking before the user is ready.
 // ─────────────────────────────────────────────────────────────────────────────
 class QuizAudioWidget extends StatefulWidget {
   final String url;
@@ -64,7 +65,7 @@ class QuizAudioWidget extends StatefulWidget {
   const QuizAudioWidget({
     super.key,
     required this.url,
-    this.autoPlay = true,
+    this.autoPlay = false,
   });
   @override State<QuizAudioWidget> createState() => _QuizAudioWidgetState();
 }

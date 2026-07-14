@@ -145,6 +145,33 @@ class ResultScreen extends StatelessWidget {
                       ]),
                     ]),
                   ),
+                  if (session.coinsLost > 0) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: AppColors.redLight,
+                        border: const Border(
+                          left: BorderSide(color: AppColors.red, width: 3)),
+                        borderRadius: const BorderRadius.only(
+                          topRight:    Radius.circular(6),
+                          bottomRight: Radius.circular(6),
+                        ),
+                      ),
+                      child: Row(children: [
+                        const Icon(Icons.remove_circle_outline,
+                          color: AppColors.red, size: 24),
+                        const SizedBox(width: 12),
+                        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text('-${session.coinsLost} coins for wrong answers',
+                            style: const TextStyle(fontSize: 14,
+                              fontWeight: FontWeight.w700, color: AppColors.red)),
+                          Text('${total - correct} wrong · 10 coins each',
+                            style: const TextStyle(fontSize: 11, color: AppColors.red)),
+                        ])),
+                      ]),
+                    ),
+                  ],
                   const SizedBox(height: 14),
 
                   // Breakdown card

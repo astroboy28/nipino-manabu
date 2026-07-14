@@ -83,6 +83,7 @@ class QuizSession {
   double get scorePercent => questions.isEmpty ? 0 : correctCount / questions.length;
   int get timeTaken => totalMs ~/ 1000;
   int coinsEarned = 0;
+  int coinsLost   = 0;
   final List<QuizQuestion> questions;
   // Chosen option index per question (null = skipped/timed out), same order
   // as `questions`. This is what actually gets submitted to the backend —

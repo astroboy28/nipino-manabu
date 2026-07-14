@@ -28,6 +28,7 @@ class _QuizScreenState extends State<QuizScreen> {
   Timer?  _timer;
   int     _qStartMs    = 0;
   String? _error;
+  bool    _outOfCoins  = false;
   final _sound = SoundService();
 
   @override
@@ -61,7 +62,11 @@ class _QuizScreenState extends State<QuizScreen> {
       });
       if (_timedMode) _startTimer();
     } else {
-      setState(() { _loading = false; _error = res.error ?? 'No questions found.'; });
+      setState(() {
+        _loading = false;
+        _error = res.error ?? 'No questions found.';
+        _outOfCoins = res.statusCode == 402;
+      });
     }
   }
 
@@ -139,6 +144,7 @@ class _QuizScreenState extends State<QuizScreen> {
     );
     if (submitRes.success && submitRes.data != null) {
       session.coinsEarned = (submitRes.data!['coins_earned'] as num?)?.toInt() ?? 0;
+      session.coinsLost   = (submitRes.data!['coins_lost'] as num?)?.toInt() ?? 0;
     }
     await context.read<AuthProvider>().refreshUser();
     if (!mounted) return;
@@ -153,6 +159,35 @@ class _QuizScreenState extends State<QuizScreen> {
     if (_loading) return const Scaffold(
         body: Center(child: CircularProgressIndicator(
             color: AppColors.red, strokeWidth: 2)));
+
+    if (_outOfCoins) return Scaffold(
+        appBar: AppBar(title: const Text('Quiz')),
+        body: Center(child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(Icons.monetization_on_outlined,
+                size: 56, color: AppColors.gold),
+            const SizedBox(height: 16),
+            const Text("You're out of coins",
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700,
+                    color: AppColors.ink)),
+            const SizedBox(height: 8),
+            Text(_error ?? 'Purchase more coins to keep taking quizzes.',
+                style: const TextStyle(fontSize: 13, color: AppColors.muted),
+                textAlign: TextAlign.center),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.pushReplacementNamed(context, '/store'),
+              icon: const Icon(Icons.add_shopping_cart, size: 18),
+              label: const Text('Get more coins'),
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Back'),
+            ),
+          ]),
+        )));
 
     if (_error != null) return Scaffold(
         appBar: AppBar(title: const Text('Quiz')),
