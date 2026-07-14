@@ -14,9 +14,16 @@ Header always set Referrer-Policy "strict-origin-when-cross-origin"
 Header always set Permissions-Policy "geolocation=(), microphone=(), camera=()"
 
 # Block sensitive files
-<FilesMatch "\.(env|sql|log|md|yaml|yml|lock|sh)$">
+<FilesMatch "\.(env|sql|log|md|yaml|yml|lock|sh|bak|old|orig|swp)$">
     Require all denied
 </FilesMatch>
+
+# Deploy backups have twice ended up sitting as live directories inside the
+# webroot (once from a prior session, once from this one) — a stray
+# _backup* directory is a full, directly-executable copy of the API, so
+# block the whole path prefix outright rather than relying on remembering
+# not to leave one here again.
+RewriteRule ^_backup - [F,L]
 
 # cron/ scripts are CLI-only — nothing should route here over HTTP, and
 # daily.php also self-checks PHP_SAPI, but deny it at the web-server level too.
@@ -56,9 +63,8 @@ RewriteRule ^v1/referral/(.+)$ api/referral.php?action=$1 [QSA,L]
 # Media (image + audio upload)
 RewriteRule ^v1/media/(.+)$ api/media.php?action=$1 [QSA,L]
 
-# Admin panel (admin/index.html calls this with action as a query string,
-# not a path segment, so this route was never added — every admin action
-# 404'd at Apache before ever reaching admin.php's own is_admin check).
+# Admin dashboard/moderation API — consumed by lib/screens/admin/ (action as
+# a query string, not a path segment, same as every other API file here).
 RewriteRule ^v1/admin$ api/admin.php [QSA,L]
 
 # Legal pages (public)
@@ -72,6 +78,10 @@ RewriteRule ^store$ webstore/store.html [QSA,L]
 # email/Mailer.php) — the page has existed at webstore/reset-password.html
 # all along, it just never had a clean-URL route like /store does.
 RewriteRule ^reset-password$ webstore/reset-password.html [QSA,L]
+
+# Cancel-account-deletion landing page (linked from the deletion-scheduled
+# email — see email/Mailer.php sendDeletionScheduled / migration 012).
+RewriteRule ^cancel-deletion$ webstore/cancel-deletion.html [QSA,L]
 
 Options -Indexes -ExecCGI
 
