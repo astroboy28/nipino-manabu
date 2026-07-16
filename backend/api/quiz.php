@@ -22,10 +22,11 @@ function handleGetQuestions(PDO $db):void{
     if(!in_array($level,$validL,true)){respond(422,false,'Invalid level.'); return;}
     if(!in_array($category,$validC,true)){respond(422,false,'Invalid category.'); return;}
 
-    // Wrong answers cost coins (see handleSubmit's quiz_wrong_penalty) — once
-    // a user is at 0, block starting a new quiz until they top up rather than
-    // letting them keep grinding at a balance that can never go negative
-    // anyway (handleSubmit floors it at 0).
+    // Wrong answers cost coins (see handleSubmit's quiz_wrong_penalty), but
+    // handleSubmit floors the post-quiz balance at 20, so this gate only
+    // fires when a user has spent below that elsewhere (e.g. the store) —
+    // block starting a new quiz until they top up rather than letting them
+    // grind at a balance that can never go negative anyway.
     $balStmt=$db->prepare('SELECT coins FROM users WHERE id=?');
     $balStmt->execute([$userId]);
     $bal=(int)($balStmt->fetch()['coins']??0);
@@ -111,22 +112,45 @@ function handleSubmit(PDO $db):void{
     $coinsLost=$wrongCount*$wrongPenalty;
     $db->prepare('INSERT INTO quiz_results (user_id,level,category,correct_count,total_count,time_taken_seconds,coins_earned) VALUES (?,?,?,?,?,?,?)')
        ->execute([$userId,$level,$category,$correctCount,$totalCount,$timeTaken,$coinsEarned]);
-    // Single atomic update for the net coin change, floored at 0 — a bad
-    // quiz can zero out a balance but never push it negative (matches the
-    // handleGetQuestions gate above, which blocks starting a new quiz at 0).
-    $balUpd=$db->prepare('UPDATE users SET coins=GREATEST(0,coins+?-?),total_score=total_score+?,last_quiz_date=CURRENT_DATE WHERE id=? RETURNING coins');
-    $balUpd->execute([$coinsEarned,$coinsLost,$correctCount*$coinPerQ,$userId]);
-    $newBal=(int)($balUpd->fetch()['coins']??0);
-    // Recorded as two separate ledger rows (reward vs penalty), matching how
-    // every other coin movement in this app is itemised. Both reference the
-    // same post-update balance since they're applied together atomically.
-    if($coinsEarned>0){
-        $db->prepare("INSERT INTO coin_transactions (user_id,amount,balance_after,type,description) VALUES (?,?,?,'quiz_reward',?)")
-           ->execute([$userId,$coinsEarned,$newBal,"Quiz reward — $level $category ($correctCount/$totalCount correct)"]);
-    }
-    if($coinsLost>0){
-        $db->prepare("INSERT INTO coin_transactions (user_id,amount,balance_after,type,description) VALUES (?,?,?,'quiz_wrong_penalty',?)")
-           ->execute([$userId,-$coinsLost,$newBal,"Quiz penalty — $wrongCount wrong answer(s) in $level $category"]);
+    $db->beginTransaction();
+    try {
+        // Lock the row so the balance we clamp against can't go stale
+        // against a concurrent duel/store spend — same reasoning as the
+        // duel join/finalize locks elsewhere in this codebase.
+        $lockStmt=$db->prepare('SELECT coins FROM users WHERE id=? FOR UPDATE');
+        $lockStmt->execute([$userId]);
+        $oldBal=(int)($lockStmt->fetch()['coins']??0);
+
+        // The reward always applies in full; the penalty is the part that
+        // gets capped so a bad quiz can never leave a user below 20 coins
+        // (matches the handleGetQuestions gate above, which blocks starting
+        // a new quiz at 0). Beginners failing their first ~10 questions
+        // would otherwise hit 0 and get locked out before they've had a
+        // chance to improve.
+        $balAfterReward=$oldBal+$coinsEarned;
+        $actualLost=min($coinsLost,max(0,$balAfterReward-20));
+        $newBal=$balAfterReward-$actualLost;
+
+        $db->prepare('UPDATE users SET coins=?,total_score=total_score+?,last_quiz_date=CURRENT_DATE WHERE id=?')
+           ->execute([$newBal,$correctCount*$coinPerQ,$userId]);
+
+        // Recorded as two separate ledger rows (reward vs penalty), matching
+        // how every other coin movement in this app is itemised. Each row
+        // uses the amount actually applied and the balance immediately
+        // after it, so balance_after always equals running total — a
+        // clamped penalty no longer disagrees with its own ledger entry.
+        if($coinsEarned>0){
+            $db->prepare("INSERT INTO coin_transactions (user_id,amount,balance_after,type,description) VALUES (?,?,?,'quiz_reward',?)")
+               ->execute([$userId,$coinsEarned,$balAfterReward,"Quiz reward — $level $category ($correctCount/$totalCount correct)"]);
+        }
+        if($actualLost>0){
+            $db->prepare("INSERT INTO coin_transactions (user_id,amount,balance_after,type,description) VALUES (?,?,?,'quiz_wrong_penalty',?)")
+               ->execute([$userId,-$actualLost,$newBal,"Quiz penalty — $wrongCount wrong answer(s) in $level $category"]);
+        }
+        $db->commit();
+    } catch (\Exception $e) {
+        $db->rollBack();
+        respond(500,false,'Failed to save quiz result.'); return;
     }
     $today=date('Y-m-d'); $yday=date('Y-m-d',strtotime('-1 day')); $last=$uRow['last_quiz_date']??null;
     if($last!==$today) $db->prepare($last===$yday
@@ -152,7 +176,7 @@ function handleSubmit(PDO $db):void{
     }
     $u=$db->prepare('SELECT coins,streak_days FROM users WHERE id=?');
     $u->execute([$userId]); $ud=$u->fetch();
-    respond(200,true,'Result saved.',['coins_earned'=>$coinsEarned,'coins_lost'=>$coinsLost,'streak_bonus'=>$streakBonus,
+    respond(200,true,'Result saved.',['coins_earned'=>$coinsEarned,'coins_lost'=>$actualLost,'streak_bonus'=>$streakBonus,
         'perfect_bonus'=>$perfectBonus,'total_coins'=>(int)$ud['coins'],
         'streak_days'=>(int)$ud['streak_days'],'new_badges'=>$newBadges]);
 }
