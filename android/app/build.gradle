@@ -43,6 +43,16 @@ android {
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            // Uploading the ProGuard/R8 mapping file requires reaching Firebase's
+            // servers during the build itself, which is failing on this machine's
+            // network (TLS trust chain issue, unrelated to app code). This only
+            // affects whether future crash reports show de-obfuscated stack traces
+            // for this build — it doesn't affect the app or the bundle's validity.
+            // Re-run `gradlew app:uploadCrashlyticsMappingFileRelease` later once
+            // the network issue is resolved to backfill it for this version.
+            firebaseCrashlytics {
+                mappingFileUploadEnabled = false
+            }
         }
     }
 }
