@@ -3,10 +3,22 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../theme/app_theme.dart';
 import '../../services/auth_provider.dart';
 import '../../services/api_service.dart';
 import '../../widgets/app_bottom_nav.dart';
+
+Future<void> _openLegalUrl(BuildContext context, String url) async {
+  final uri = Uri.parse(url);
+  if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open $url')),
+      );
+    }
+  }
+}
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -276,12 +288,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _SettingRow(
                     icon: Icons.privacy_tip_outlined,
                     label: 'Privacy Policy',
-                    onTap: () {},
+                    onTap: () => _openLegalUrl(context, 'https://nipino-manabu.com/privacy'),
                   ),
                   _SettingRow(
                     icon: Icons.description_outlined,
                     label: 'Terms of Service',
-                    onTap: () {},
+                    onTap: () => _openLegalUrl(context, 'https://nipino-manabu.com/terms'),
                   ),
 
                   const SizedBox(height: 16),

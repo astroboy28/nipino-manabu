@@ -1,11 +1,23 @@
 // lib/screens/profile/profile_screen.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../theme/app_theme.dart';
 import '../../services/auth_provider.dart';
 import '../../services/api_service.dart';
 import '../../models/models.dart';
 import '../../widgets/app_bottom_nav.dart';
+
+Future<void> _openLegalUrl(BuildContext context, String url) async {
+  final uri = Uri.parse(url);
+  if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open $url')),
+      );
+    }
+  }
+}
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -274,9 +286,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   _LinkRow(icon: Icons.timer_outlined, label: 'Quiz Preferences',
                     onTap: () => Navigator.pushNamed(context, '/quiz-preferences')),
                   _LinkRow(icon: Icons.privacy_tip_outlined, label: 'Privacy Policy',
-                    onTap: () {}),
+                    onTap: () => _openLegalUrl(context, 'https://nipino-manabu.com/privacy')),
                   _LinkRow(icon: Icons.description_outlined, label: 'Terms of Service',
-                    onTap: () {}),
+                    onTap: () => _openLegalUrl(context, 'https://nipino-manabu.com/terms')),
                   _LinkRow(icon: Icons.delete_outline, label: 'Delete my account',
                     onTap: () => _confirmDelete(context), color: AppColors.red),
                 ],

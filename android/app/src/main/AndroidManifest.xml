@@ -12,6 +12,16 @@
     <!-- Billing (IAP) -->
     <uses-permission android:name="com.android.vending.BILLING" />
 
+    <!-- Android 11+ package visibility: required for url_launcher to open
+         https:// links (Privacy Policy / Terms of Service) in the browser. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+    </queries>
+
     <application
         android:label="Nipino-Manabu"
         android:name="${applicationName}"

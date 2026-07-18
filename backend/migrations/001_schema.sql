@@ -235,6 +235,13 @@ CREATE TRIGGER trg_users_updated
 CREATE OR REPLACE FUNCTION refresh_leaderboard() RETURNS VOID AS $$
 BEGIN
   -- All-time
+  -- Accuracy must be averaged over the user's ENTIRE quiz_results history,
+  -- not just the last 7 days — the 7-day cutoff belongs to the weekly
+  -- bucket below. Reusing it here silently zeroed out accuracy for anyone
+  -- whose most recent quiz was more than a week old, even though their
+  -- total_score (read from the unfiltered users.total_score column) still
+  -- showed correctly. Confirmed live: users with real all-time history but
+  -- no activity in the last 7 days showed accuracy=0.00 despite nonzero score.
   DELETE FROM leaderboard_snapshots WHERE period = 'alltime' AND level IS NULL;
   INSERT INTO leaderboard_snapshots (user_id, period, level, total_score, accuracy, rank_pos)
   SELECT u.id, 'alltime', NULL, u.total_score,
@@ -242,7 +249,6 @@ BEGIN
     ROW_NUMBER() OVER (ORDER BY u.total_score DESC)
   FROM users u
   LEFT JOIN quiz_results qr ON qr.user_id = u.id
-    AND qr.taken_at > NOW() - INTERVAL '7 days'
   WHERE u.is_active = TRUE
   GROUP BY u.id
   ON CONFLICT (user_id, period, level) DO UPDATE
@@ -263,6 +269,27 @@ BEGIN
     AND qr.taken_at > NOW() - INTERVAL '7 days'
   WHERE u.is_active = TRUE
   GROUP BY u.id
+  ON CONFLICT (user_id, period, level) DO UPDATE
+    SET total_score=EXCLUDED.total_score,
+        accuracy=EXCLUDED.accuracy,
+        rank_pos=EXCLUDED.rank_pos,
+        snapshot_at=NOW();
+
+  -- Per-level, all-time — the app forces period=alltime and sets a level
+  -- filter when the user taps an N5..N1 tab (see leaderboard_screen.dart),
+  -- but no snapshot rows with a non-null level were ever generated, so
+  -- backend/api/leaderboard.php's WHERE level=? always matched zero rows
+  -- and every level tab showed empty/0% for every user.
+  DELETE FROM leaderboard_snapshots WHERE period = 'alltime' AND level IS NOT NULL;
+  INSERT INTO leaderboard_snapshots (user_id, period, level, total_score, accuracy, rank_pos)
+  SELECT u.id, 'alltime', qr.level,
+    SUM(qr.correct_count * 10),
+    COALESCE(AVG(qr.score_percent), 0),
+    ROW_NUMBER() OVER (PARTITION BY qr.level ORDER BY SUM(qr.correct_count * 10) DESC)
+  FROM users u
+  JOIN quiz_results qr ON qr.user_id = u.id
+  WHERE u.is_active = TRUE
+  GROUP BY u.id, qr.level
   ON CONFLICT (user_id, period, level) DO UPDATE
     SET total_score=EXCLUDED.total_score,
         accuracy=EXCLUDED.accuracy,
