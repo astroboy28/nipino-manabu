@@ -195,19 +195,25 @@ class _HomeScreenState extends State<HomeScreen> {
             ]),
           ),
           const SizedBox(width: 6),
-          // Coins pill
-          _Pill(
-            color: AppColors.goldLight,
-            border: const Color(0xFFE8C56A),
-            child: Row(children: [
-              const Icon(Icons.monetization_on,
-                size: 14, color: AppColors.gold),
-              const SizedBox(width: 3),
-              Text('${user?.coins ?? 0}',
-                style: const TextStyle(
-                  fontSize: 12, fontWeight: FontWeight.w700,
-                  color: AppColors.gold)),
-            ]),
+          // Coins pill — tap to open the coin store
+          GestureDetector(
+            onTap: () => Navigator.pushNamed(context, '/store'),
+            child: _Pill(
+              color: AppColors.goldLight,
+              border: const Color(0xFFE8C56A),
+              child: Row(children: [
+                const Icon(Icons.monetization_on,
+                  size: 14, color: AppColors.gold),
+                const SizedBox(width: 3),
+                Text('${user?.coins ?? 0}',
+                  style: const TextStyle(
+                    fontSize: 12, fontWeight: FontWeight.w700,
+                    color: AppColors.gold)),
+                const SizedBox(width: 2),
+                const Icon(Icons.add_circle,
+                  size: 12, color: AppColors.gold),
+              ]),
+            ),
           ),
         ],
       ),

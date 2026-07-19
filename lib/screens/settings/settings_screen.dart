@@ -333,6 +333,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     subtitle: 'Update your account password',
                     onTap: () => _showChangePasswordDialog(context),
                   ),
+                  _SettingRow(
+                    icon: Icons.monetization_on_outlined,
+                    label: 'Coin Store',
+                    subtitle: 'Buy coins or go premium',
+                    onTap: () => Navigator.pushNamed(context, '/store'),
+                  ),
 
                   const SizedBox(height: 16),
                   _SectionLabel('NOTIFICATIONS'),

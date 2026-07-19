@@ -252,7 +252,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                   // Stats row
                   Row(children: [
-                    _StatTile(num: '${user?.coins ?? 0}',     label: 'Coins',    color: AppColors.gold),
+                    _StatTile(num: '${user?.coins ?? 0}',     label: 'Coins',    color: AppColors.gold,
+                      onTap: () => Navigator.pushNamed(context, '/store')),
                     const SizedBox(width: 8),
                     _StatTile(num: '${user?.streakDays ?? 0}', label: 'Streak',  color: const Color(0xFFE65100)),
                     const SizedBox(width: 8),
@@ -317,20 +318,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
 class _StatTile extends StatelessWidget {
   final String num, label;
   final Color color;
-  const _StatTile({required this.num, required this.label, required this.color});
+  final VoidCallback? onTap;
+  const _StatTile({required this.num, required this.label, required this.color, this.onTap});
   @override Widget build(BuildContext context) => Expanded(
-    child: Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppColors.bg2,
-        border: Border.all(color: AppColors.border),
-        borderRadius: BorderRadius.circular(6),
+    child: GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppColors.bg2,
+          border: Border.all(color: AppColors.border),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Column(children: [
+          Text(num, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: color)),
+          const SizedBox(height: 2),
+          Text(label, style: const TextStyle(fontSize: 11, color: AppColors.muted)),
+        ]),
       ),
-      child: Column(children: [
-        Text(num, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: color)),
-        const SizedBox(height: 2),
-        Text(label, style: const TextStyle(fontSize: 11, color: AppColors.muted)),
-      ]),
     ),
   );
 }
