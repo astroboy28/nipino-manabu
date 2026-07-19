@@ -1,17 +1,46 @@
 // lib/services/url_opener.dart
-//
-// Opens a URL in the external browser via a native platform channel instead
-// of the url_launcher plugin — avoids pulling in androidx.browser (and any
-// other new native dependency) just to fire an implicit ACTION_VIEW intent
-// that two lines of native code already does for free.
+// Opens URL using platform channel (no external browser dependency needed)
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-const _channel = MethodChannel('com.nipino.manabu/url_opener');
+final _navigatorKey = GlobalKey<NavigatorState>();
 
 Future<bool> openExternalUrl(String url) async {
   try {
-    return await _channel.invokeMethod<bool>('open', {'url': url}) ?? false;
-  } on PlatformException {
-    return false;
+    // Try platform channel first
+    const channel = MethodChannel('com.nipino.manabu/url_opener');
+    final result = await channel.invokeMethod<bool>('open', {'url': url});
+    if (result == true) return true;
+  } catch (_) {}
+
+  // Fallback: show dialog with URL and copy button
+  final context = _navigatorKey.currentContext;
+  if (context != null && context.mounted) {
+    await showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Open Link'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('Copy this link and open in your browser:',
+            style: TextStyle(fontSize: 13)),
+          const SizedBox(height: 8),
+          SelectableText(url,
+            style: const TextStyle(fontSize: 12, color: Color(0xFF1565C0))),
+        ]),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: url));
+              Navigator.pop(_);
+            },
+            child: const Text('Copy Link')),
+          TextButton(
+            onPressed: () => Navigator.pop(_),
+            child: const Text('Close')),
+        ],
+      ),
+    );
+    return true;
   }
+  return false;
 }
