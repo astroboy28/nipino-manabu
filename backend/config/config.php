@@ -60,6 +60,7 @@ return [
         'streak_bonus'   => 10,
         'perfect_bonus'  => 25,
         'wrong_answer_penalty' => 5,
+        'daily_login_bonus'    => 10,
     ],
 
     // ── IAP product → coins mapping ───────────────────────────────────────────

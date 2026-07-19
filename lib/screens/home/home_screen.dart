@@ -24,6 +24,32 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _loadProgress();
+    _claimDailyBonus();
+  }
+
+  Future<void> _claimDailyBonus() async {
+    final res = await ApiService.claimDailyBonus();
+    if (!mounted || !res.success) return;
+    final data = res.data!;
+    if (data['awarded'] != true) return;
+    if (!mounted) return;
+    await context.read<AuthProvider>().refreshUser();
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: const Text('🎁 Daily Bonus!',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        content: Text('+${data['coins_earned']} coins for coming back today.',
+          style: const TextStyle(fontSize: 13)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Nice!')),
+        ],
+      ),
+    );
   }
 
   bool _isLevelUnlocked(List<LevelProgress> progress, int index) {

@@ -118,6 +118,11 @@ class ApiService {
       return ApiResponse(success:false,error:b['message'],statusCode:res.statusCode); } catch(e){return _err(e);}
   }
   static Future<void> updateFcmToken(String token) async { try{await _put('/user/profile',{'fcm_token':token});}catch(_){} }
+  static Future<ApiResponse<Map<String,dynamic>>> claimDailyBonus() async {
+    try { final res=await _post('/user/daily-bonus',{}); final b=jsonDecode(res.body);
+      if(res.statusCode==200) return ApiResponse(success:true,data:b,statusCode:200);
+      return ApiResponse(success:false,error:b['message'],statusCode:res.statusCode); } catch(e){return _err(e);}
+  }
   static Future<ApiResponse<List<UserSearchResult>>> searchUsers(String query) async {
     try { final res=await _get('/user/search?q=${Uri.encodeQueryComponent(query)}'); final b=jsonDecode(res.body);
       if(res.statusCode==200) return ApiResponse(success:true,data:(b['users'] as List).map((e)=>UserSearchResult.fromJson(e)).toList(),statusCode:200);

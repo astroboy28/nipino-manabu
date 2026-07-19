@@ -21,8 +21,54 @@ match (true) {
     $method === 'GET'  && $action === 'history'  => handleHistory($db),
     $method === 'GET'  && $action === 'search'   => handleSearch($db),
     $method === 'PUT'  && $action === 'profile'  => handleUpdateProfile($db),
+    $method === 'POST' && $action === 'daily-bonus' => handleDailyBonus($db),
     default => respond(404, false, 'Endpoint not found'),
 };
+
+// ── POST /user/daily-bonus ────────────────────────────────────────────────────
+// Idempotent — safe to call on every app launch. Only the first call each
+// calendar day actually awards coins; the WHERE clause on the UPDATE makes
+// the "already claimed today" check and the award atomic, so two requests
+// racing on app resume can't both succeed.
+function handleDailyBonus(PDO $db): void {
+    $claims = Auth::requireAuth();
+    $userId = (int)$claims['sub'];
+    $cfg    = require dirname(__DIR__) . '/config/config.php';
+    $bonus  = (int)($cfg['coins']['daily_login_bonus'] ?? 10);
+
+    $db->beginTransaction();
+    try {
+        $stmt = $db->prepare(
+            'UPDATE users SET coins=coins+?, last_login_bonus_date=CURRENT_DATE
+             WHERE id=? AND is_active=TRUE
+               AND (last_login_bonus_date IS NULL OR last_login_bonus_date<CURRENT_DATE)
+             RETURNING coins'
+        );
+        $stmt->execute([$bonus, $userId]);
+        $row = $stmt->fetch();
+
+        if ($row) {
+            $db->prepare(
+                "INSERT INTO coin_transactions (user_id,amount,balance_after,type,description)
+                 VALUES (?,?,?,'daily_login_bonus','Daily login bonus')"
+            )->execute([$userId, $bonus, (int)$row['coins']]);
+            $db->commit();
+            respond(200, true, 'Daily bonus claimed!',
+                ['awarded' => true, 'coins_earned' => $bonus, 'total_coins' => (int)$row['coins']]);
+            return;
+        }
+
+        $db->rollBack();
+        $curStmt = $db->prepare('SELECT coins FROM users WHERE id=?');
+        $curStmt->execute([$userId]);
+        respond(200, true, 'Already claimed today.',
+            ['awarded' => false, 'coins_earned' => 0, 'total_coins' => (int)($curStmt->fetch()['coins'] ?? 0)]);
+    } catch (\Throwable $e) {
+        $db->rollBack();
+        Monitor::error('daily_bonus', $e->getMessage(), [], $userId);
+        respond(500, false, 'Failed to claim daily bonus.');
+    }
+}
 
 // ── GET /user/profile ─────────────────────────────────────────────────────────
 function handleProfile(PDO $db): void {
