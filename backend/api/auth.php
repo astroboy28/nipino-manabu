@@ -1,6 +1,7 @@
 <?php
 // backend/api/auth.php — register, login, refresh, logout, forgot-password,
-//                        reset-password, verify-email, resend-verification
+//                        reset-password, verify-email, resend-verification,
+//                        change-password
 declare(strict_types=1);
 
 require_once dirname(__DIR__) . '/config/Database.php';
@@ -28,6 +29,7 @@ match (true) {
     $method==='POST' && $action==='logout'              => handleLogout($db),
     $method==='POST' && $action==='forgot-password'     => handleForgotPassword($db,$body,$ip),
     $method==='POST' && $action==='reset-password'      => handleResetPassword($db,$body),
+    $method==='POST' && $action==='change-password'     => handleChangePassword($db,$body),
     $method==='GET'  && $action==='verify-email'        => handleVerifyEmail($db),
     $method==='POST' && $action==='resend-verification' => handleResendVerification($db,$body,$ip),
     default => respond(404,false,'Endpoint not found'),
@@ -175,6 +177,27 @@ function handleResetPassword(PDO $db, array $body): void {
         respond(500,false,'Reset failed. Try again.'); return;
     }
     respond(200,true,'Password updated. Please sign in with your new password.');
+}
+
+function handleChangePassword(PDO $db, array $body): void {
+    $claims  = Auth::requireAuth();
+    $uid     = (int)$claims['sub'];
+    $current = $body['current_password'] ?? '';
+    $new     = $body['new_password'] ?? '';
+    if (!$current || strlen($new) < 8) { respond(422,false,'Current and new password (8+ chars) required.'); return; }
+    if (!preg_match('/[A-Z]/',$new) || !preg_match('/[0-9]/',$new))
+        { respond(422,false,'New password needs an uppercase letter and a number.'); return; }
+    $stmt=$db->prepare('SELECT password_hash FROM users WHERE id=? AND is_active=TRUE LIMIT 1');
+    $stmt->execute([$uid]);
+    $user=$stmt->fetch();
+    if (!$user || !Auth::verifyPassword($current,$user['password_hash'])) {
+        respond(401,false,'Current password is incorrect.'); return;
+    }
+    $db->prepare('UPDATE users SET password_hash=? WHERE id=?')
+       ->execute([Auth::hashPassword($new),$uid]);
+    $db->prepare('UPDATE refresh_tokens SET revoked_at=NOW() WHERE user_id=? AND revoked_at IS NULL')
+       ->execute([$uid]);
+    respond(200,true,'Password changed successfully.');
 }
 
 function handleRefresh(PDO $db, array $body): void {
