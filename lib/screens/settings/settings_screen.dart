@@ -188,6 +188,97 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) Navigator.pushReplacementNamed(context, '/login');
   }
 
+  Future<void> _showChangePasswordDialog(BuildContext context) async {
+    final currentCtrl = TextEditingController();
+    final newCtrl     = TextEditingController();
+    final confirmCtrl = TextEditingController();
+    String? error;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) => AlertDialog(
+          title: const Text('Change Password',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            if (error != null) ...[
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFDEDEC),
+                  borderRadius: BorderRadius.circular(6)),
+                child: Text(error!, style: const TextStyle(
+                  color: Color(0xFFC0392B), fontSize: 12))),
+              const SizedBox(height: 12),
+            ],
+            TextField(
+              controller: currentCtrl,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Current password',
+                prefixIcon: Icon(Icons.lock_outline, size: 18)),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: newCtrl,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'New password',
+                prefixIcon: Icon(Icons.lock_outline, size: 18)),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: confirmCtrl,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Confirm new password',
+                prefixIcon: Icon(Icons.lock_outline, size: 18)),
+            ),
+          ]),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: () async {
+                if (newCtrl.text != confirmCtrl.text) {
+                  setS(() => error = 'Passwords do not match');
+                  return;
+                }
+                if (newCtrl.text.length < 8) {
+                  setS(() => error = 'Password must be at least 8 characters');
+                  return;
+                }
+                if (!RegExp(r'[A-Z]').hasMatch(newCtrl.text)) {
+                  setS(() => error = 'Password needs an uppercase letter');
+                  return;
+                }
+                if (!RegExp(r'[0-9]').hasMatch(newCtrl.text)) {
+                  setS(() => error = 'Password needs a number');
+                  return;
+                }
+                final res = await ApiService.changePassword(
+                  currentPassword: currentCtrl.text,
+                  newPassword: newCtrl.text);
+                if (!context.mounted) return;
+                if (res.success) {
+                  Navigator.pop(ctx);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Password changed successfully!'),
+                      backgroundColor: Color(0xFF27AE60),
+                      behavior: SnackBarBehavior.floating));
+                } else {
+                  setS(() => error = res.error ?? 'Failed to change password');
+                }
+              },
+              child: const Text('Change')),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = context.watch<AuthProvider>().user;
@@ -235,6 +326,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     label: user?.username ?? '—',
                     subtitle: user?.email,
                     onTap: () => Navigator.pushNamed(context, '/profile'),
+                  ),
+                  _SettingRow(
+                    icon: Icons.lock_outline,
+                    label: 'Change Password',
+                    subtitle: 'Update your account password',
+                    onTap: () => _showChangePasswordDialog(context),
                   ),
 
                   const SizedBox(height: 16),
@@ -364,7 +461,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
 
             AppBottomNav(
-              currentIndex: 4,
+              currentIndex: 5,
               onTap: (i) {
                 switch (i) {
                   case 0: Navigator.pushReplacementNamed(context, '/home'); break;

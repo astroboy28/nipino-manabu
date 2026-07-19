@@ -182,4 +182,18 @@ class ApiService {
       if(res.statusCode==200) return ApiResponse(success:true,data:b,statusCode:200);
       return ApiResponse(success:false,error:b['message'],statusCode:res.statusCode); } catch(e){return _err(e);}
   }
+  static Future<ApiResponse<void>> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    try {
+      final res = await _post('/auth/change-password', {
+        'current_password': currentPassword,
+        'new_password': newPassword,
+      });
+      final b = jsonDecode(res.body);
+      if (res.statusCode == 200) return ApiResponse(success: true, statusCode: 200);
+      return ApiResponse(success: false, error: b['message'], statusCode: res.statusCode);
+    } catch (e) { return _err(e); }
+  }
 }
