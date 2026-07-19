@@ -6,6 +6,7 @@ import '../../services/auth_provider.dart';
 import '../../services/api_service.dart';
 import '../../models/models.dart';
 import '../../widgets/app_bottom_nav.dart';
+import '../../widgets/featured_challenge_banner.dart';
 
 
 
@@ -79,6 +80,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     // Hero band
                     _buildHero(user),
+                    const SizedBox(height: 12),
+
+                    // Duel / Challenges / Invite
+                    const SocialActionRow(),
+                    const SizedBox(height: 8),
+
+                    // Featured challenge (hidden automatically when none is live)
+                    const FeaturedChallengeBanner(),
 
                     // Levels
                     const SectionHeader(tag: 'JLPT LEVELS'),
