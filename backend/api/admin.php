@@ -98,7 +98,7 @@ function handleGetQuestions(PDO $db): void {
     if ($search)   { $where .= ' AND (question_text ILIKE ? OR explanation ILIKE ?)'; $params[] = "%$search%"; $params[] = "%$search%"; }
     $params[] = $limit;
     $params[] = $offset;
-    $stmt = $db->prepare("SELECT id,level,category,question_text,options,correct_index,explanation,memory_tip,point_value,is_active FROM quiz_questions $where ORDER BY id DESC LIMIT ? OFFSET ?");
+    $stmt = $db->prepare("SELECT id,level,category,question_text,question_type,options,correct_index,explanation,memory_tip,point_value,is_active,audio_url FROM quiz_questions $where ORDER BY id DESC LIMIT ? OFFSET ?");
     $stmt->execute($params);
     $questions = $stmt->fetchAll();
     $total = $db->query("SELECT COUNT(*) FROM quiz_questions")->fetchColumn();
@@ -114,17 +114,26 @@ function handleAddQuestion(PDO $db): void {
     $explanation = trim($b['explanation'] ?? '');
     $tip      = trim($b['memory_tip'] ?? '');
     $points   = (int)($b['point_value'] ?? 10);
+    $audioUrl = trim($b['audio_url'] ?? '');
     if (!$level || !$category || !$text || count($options) < 2) { respond(422, false, 'Missing fields.'); return; }
-    $db->prepare('INSERT INTO quiz_questions (level,category,question_text,question_type,options,correct_index,explanation,memory_tip,point_value,is_active) VALUES (?,?,?,?,?,?,?,?,?,true)')
-       ->execute([$level,$category,$text,'reading',json_encode($options,JSON_UNESCAPED_UNICODE),$correct,$explanation,$tip,$points]);
+    // question_type isn't a separate field in the admin panel's form -- it
+    // follows category. Listening-category questions need question_type=
+    // 'listening' for QuizQuestion.isListening (lib/models/models.dart) to
+    // actually trigger listening UI/behavior client-side; this was
+    // previously hardcoded to 'reading' for every question regardless.
+    $questionType = $category === 'listening' ? 'listening' : 'reading';
+    $db->prepare('INSERT INTO quiz_questions (level,category,question_text,question_type,options,correct_index,explanation,memory_tip,point_value,is_active,audio_url) VALUES (?,?,?,?,?,?,?,?,?,true,?)')
+       ->execute([$level,$category,$text,$questionType,json_encode($options,JSON_UNESCAPED_UNICODE),$correct,$explanation,$tip,$points,$audioUrl ?: null]);
     respond(201, true, 'Question added.');
 }
 function handleEditQuestion(PDO $db): void {
     $b  = Auth::getJsonBody();
     $id = (int)($b['id'] ?? 0);
     if ($id < 1) { respond(422, false, 'Invalid ID.'); return; }
-    $db->prepare('UPDATE quiz_questions SET level=?,category=?,question_text=?,options=?,correct_index=?,explanation=?,memory_tip=?,point_value=?,is_active=? WHERE id=?')
-       ->execute([$b['level'],$b['category'],$b['question_text'],json_encode($b['options'],JSON_UNESCAPED_UNICODE),(int)$b['correct_index'],$b['explanation'],$b['memory_tip'],(int)$b['point_value'],(bool)($b['is_active']??true),$id]);
+    $questionType = ($b['category'] ?? '') === 'listening' ? 'listening' : 'reading';
+    $audioUrl = trim($b['audio_url'] ?? '');
+    $db->prepare('UPDATE quiz_questions SET level=?,category=?,question_text=?,question_type=?,options=?,correct_index=?,explanation=?,memory_tip=?,point_value=?,is_active=?,audio_url=? WHERE id=?')
+       ->execute([$b['level'],$b['category'],$b['question_text'],$questionType,json_encode($b['options'],JSON_UNESCAPED_UNICODE),(int)$b['correct_index'],$b['explanation'],$b['memory_tip'],(int)$b['point_value'],(bool)($b['is_active']??true),$audioUrl ?: null,$id]);
     respond(200, true, 'Question updated.');
 }
 function handleDeleteQuestion(PDO $db): void {

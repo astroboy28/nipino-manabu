@@ -123,16 +123,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
-    pwCtrl.dispose();
-    if (confirmed != true) return;
+    if (confirmed != true) { pwCtrl.dispose(); return; }
 
-    // Re-open to get password value — in production use a form controller
-    // For now show a confirmation that it was processed
-    setState(() => _deletionPending = true);
-    _showSnack(
-      'Deletion scheduled. Check your email for details. '
-      'You have 30 days to cancel.',
-    );
+    final res = await ApiService.requestAccountDeletion(pwCtrl.text);
+    pwCtrl.dispose();
+    if (!mounted) return;
+    if (res.success) {
+      setState(() => _deletionPending = true);
+      _showSnack(
+        'Deletion scheduled. Check your email for details. '
+        'You have 30 days to cancel.',
+      );
+    } else {
+      _showSnack(res.error ?? 'Failed to schedule deletion. Check your password and try again.');
+    }
   }
 
   Future<void> _cancelDeletion() async {
@@ -152,9 +156,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
-    if (confirmed(res)) {
+    if (!confirmed(res)) return;
+    final apiRes = await ApiService.cancelAccountDeletion();
+    if (!mounted) return;
+    if (apiRes.success) {
       setState(() => _deletionPending = false);
       _showSnack('Account deletion cancelled. Your account is restored.');
+    } else {
+      _showSnack(apiRes.error ?? 'Failed to cancel deletion. Try again.');
     }
   }
 

@@ -385,6 +385,8 @@ function handleExport(PDO $db): void {
 
     // Log the export request
     Monitor::info('gdpr_export', 'Data export generated', [], $userId);
+    $db->prepare('INSERT INTO gdpr_export_log (user_id, ip_address) VALUES (?,?)')
+       ->execute([$userId, $ip]);
 
     // Set download headers so client can save as file
     header('Content-Type: application/json; charset=utf-8');
