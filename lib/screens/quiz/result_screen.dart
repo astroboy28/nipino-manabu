@@ -166,7 +166,7 @@ class ResultScreen extends StatelessWidget {
                           Text('-${session.coinsLost} coins for wrong answers',
                             style: const TextStyle(fontSize: 14,
                               fontWeight: FontWeight.w700, color: AppColors.red)),
-                          Text('${total - correct} wrong · 10 coins each',
+                          Text('${total - correct} wrong answer${(total - correct) == 1 ? '' : 's'}',
                             style: const TextStyle(fontSize: 11, color: AppColors.red)),
                         ])),
                       ]),

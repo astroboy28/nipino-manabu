@@ -55,7 +55,7 @@ function handleRegister(PDO $db, array $body, string $ip): void {
     $hash    = password_hash($password, PASSWORD_BCRYPT, ["cost" => 12]);
     $tok     = bin2hex(random_bytes(32));
     $tokHash = hash("sha256", $tok);
-    $sql = "INSERT INTO users (username, email, password_hash, coins, email_verify_token, email_verify_expires) VALUES (?, ?, ?, 100, ?, NOW() + '24 hours'::interval) RETURNING id, uuid, username, email, coins, streak_days, current_level, total_score, created_at, is_verified";
+    $sql = "INSERT INTO users (username, email, password_hash, coins, email_verify_token, email_verify_expires) VALUES (?, ?, ?, 250, ?, NOW() + '24 hours'::interval) RETURNING id, uuid, username, email, coins, streak_days, current_level, total_score, created_at, is_verified";
     $stmt = $db->prepare($sql);
     $stmt->execute([$username, $email, $hash, $tokHash]);
     $user = $stmt->fetch();

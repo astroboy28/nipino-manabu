@@ -102,7 +102,7 @@ function handleSubmit(PDO $db):void{
 
     $cfg=require dirname(__DIR__).'/config/config.php';
     $coinPerQ=$cfg['coins'][$level]??10; $streakBonus=0; $perfectBonus=0;
-    $wrongPenalty=(int)($cfg['coins']['wrong_answer_penalty']??10);
+    $wrongPenalty=(int)($cfg['coins']['wrong_answer_penalty']??5);
     $uStmt=$db->prepare('SELECT streak_days,last_quiz_date FROM users WHERE id=?');
     $uStmt->execute([$userId]); $uRow=$uStmt->fetch();
     if($uRow&&(int)$uRow['streak_days']>=7) $streakBonus=$cfg['coins']['streak_bonus'];
