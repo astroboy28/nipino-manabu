@@ -19,7 +19,12 @@ class RateLimiter {
             $pass = $_ENV['REDIS_PASSWORD']  ?? '';
             $r->connect($host, $port, 2.0); // 2s timeout
             if ($pass) $r->auth($pass);
-            $r->select(0);
+            // Staging shares this Redis instance with production -- DB 0
+            // stays the production default so behavior here is unchanged;
+            // staging's .env sets REDIS_DB=1 so its rate-limit counters
+            // (and anyone testing registration/login limits) can't affect
+            // real users, and vice versa.
+            $r->select((int)($_ENV['REDIS_DB'] ?? 0));
             $r->setOption(\Redis::OPT_PREFIX, 'nipino:rl:');
             self::$redis = $r;
         } catch (\RedisException $e) {
