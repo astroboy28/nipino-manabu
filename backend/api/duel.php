@@ -340,14 +340,20 @@ function handleReady(PDO $db): void {
     $roomId = (int) ($body['room_id'] ?? 0);
 
     // Verify participant
+    // joined_count must include participants already flipped to 'ready',
+    // not just those still sitting at 'joined' -- otherwise it shrinks by
+    // one on every ready call (each caller flips out of 'joined' before the
+    // next person's count runs), so a 2-player room's total reads back as 1
+    // by the time the second player readies and the >= 2 guard below never
+    // passes. Confirmed live: 2-player duels could never start at all.
     $stmt = $db->prepare(
         "SELECT dp.id, dr.host_user_id, dr.status, dr.max_players,
-           (SELECT COUNT(*) FROM duel_participants WHERE room_id=? AND status='joined') AS joined_count
+           (SELECT COUNT(*) FROM duel_participants WHERE room_id=? AND status IN ('joined','ready')) AS joined_count
          FROM duel_participants dp
          JOIN duel_rooms dr ON dr.id=dp.room_id
          WHERE dp.room_id=? AND dp.user_id=?"
     );
-    $stmt->execute([$roomId, $userId]);
+    $stmt->execute([$roomId, $roomId, $userId]);
     $row = $stmt->fetch();
     if (!$row)                          { respond(403, false, 'Not in this room.'); return; }
     if ($row['status'] !== 'waiting')   { respond(409, false, 'Duel already started.'); return; }
