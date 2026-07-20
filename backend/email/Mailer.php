@@ -381,4 +381,11 @@ HTML, 'Your account is ready — let\'s learn Japanese!');
         return self::send($to, $username,
             'ようこそ! Your account is ready — Nipino-Manabu', $html, $text);
     }
+
+    // ── Ops alert (uptime monitor) — plain text, no marketing wrapper ────────
+    public static function sendOpsAlert(string $to, string $subject, string $body): bool {
+        $html = '<pre style="font-family:monospace;font-size:13px;white-space:pre-wrap;">'
+              . htmlspecialchars($body, ENT_QUOTES) . '</pre>';
+        return self::send($to, 'Nipino-Manabu Ops', $subject, $html, $body);
+    }
 }
