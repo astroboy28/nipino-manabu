@@ -284,8 +284,12 @@ function _appleResultFor(array $data, string $productId, bool $isSubscription): 
 function checkAppleSubscriptionStatus(string $originalTransactionId): array {
     $keyId    = $_ENV['APPLE_ASA_KEY_ID']      ?? '';
     $issuerId = $_ENV['APPLE_ASA_ISSUER_ID']   ?? '';
-    $privKey  = $_ENV['APPLE_ASA_PRIVATE_KEY'] ?? '';
     $bundleId = $_ENV['APPLE_BUNDLE_ID']       ?? 'com.nipino.manabu';
+    // .env is line-based, so a multi-line PEM key is stored with literal
+    // \n instead of real newlines (same trick GOOGLE_SERVICE_ACCOUNT_JSON's
+    // embedded private_key already relies on, just without JSON to decode
+    // it automatically) — convert back before handing it to openssl.
+    $privKey  = str_replace('\n', "\n", $_ENV['APPLE_ASA_PRIVATE_KEY'] ?? '');
     if (!$keyId || !$issuerId || !$privKey) {
         error_log('Apple App Store Server API not configured (APPLE_ASA_* missing from .env)');
         return ['valid' => false, 'expires_at' => null];
