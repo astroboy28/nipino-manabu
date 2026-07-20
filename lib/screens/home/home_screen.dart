@@ -57,25 +57,16 @@ class _HomeScreenState extends State<HomeScreen> {
   if (index >= progress.length) return false;
   return progress[index - 1].percent >= 0.5;
 }
+  bool _progressLoadFailed = false;
+
   Future<void> _loadProgress() async {
     final res = await ApiService.getProgress();
     if (mounted && res.success) {
-      setState(() { _progress = res.data!; _loadingProgress = false; });
+      setState(() { _progress = res.data!; _loadingProgress = false; _progressLoadFailed = false; });
     } else {
-      setState(() => _loadingProgress = false);
+      setState(() { _loadingProgress = false; _progressLoadFailed = true; });
     }
   }
-
-  // Default progress if API not yet connected
-  List<LevelProgress> get _displayProgress => _progress.isNotEmpty
-      ? _progress
-      : const [
-          LevelProgress(level:'N5', percent:1.0,  completedTopics:6, totalTopics:6,  examUnlocked:true),
-          LevelProgress(level:'N4', percent:0.85, completedTopics:5, totalTopics:6,  examUnlocked:false),
-          LevelProgress(level:'N3', percent:0.68, completedTopics:4, totalTopics:6,  examUnlocked:false),
-          LevelProgress(level:'N2', percent:0.40, completedTopics:2, totalTopics:6,  examUnlocked:false),
-          LevelProgress(level:'N1', percent:0.12, completedTopics:1, totalTopics:6,  examUnlocked:false),
-        ];
 
   static const _categories = [
     {'icon': Icons.edit_note, 'label': 'Kanji',      'sub': '2,136 characters', 'cat': 'kanji'},
@@ -123,22 +114,37 @@ class _HomeScreenState extends State<HomeScreen> {
                             child: Center(child: CircularProgressIndicator(
                               color: AppColors.red, strokeWidth: 2)),
                           )
-                        : Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: Column(
-                              children: _displayProgress.asMap().entries.map((e) =>
-                                  LevelProgressCard(
-                                    progress: e.value,
-                                    onTap: _isLevelUnlocked(_displayProgress, e.key) ? () => Navigator.pushNamed(
-                                      context, '/lessons',
-                                      arguments: e.value.level,
-                                    ) : () => ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('🔒 Complete the previous level first!'),
-                                      behavior: SnackBarBehavior.floating)),
-                                  )
-                              ).toList(),
-                            ),
-                          ),
+                        : _progress.isEmpty
+                            ? Padding(
+                                padding: const EdgeInsets.all(24),
+                                child: Center(child: Column(children: [
+                                  Text(
+                                    _progressLoadFailed
+                                        ? "Couldn't load your progress."
+                                        : 'No progress yet — start a quiz!',
+                                    style: const TextStyle(color: AppColors.muted, fontSize: 12)),
+                                  if (_progressLoadFailed) ...[
+                                    const SizedBox(height: 6),
+                                    TextButton(onPressed: _loadProgress, child: const Text('Retry')),
+                                  ],
+                                ])),
+                              )
+                            : Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 16),
+                                child: Column(
+                                  children: _progress.asMap().entries.map((e) =>
+                                      LevelProgressCard(
+                                        progress: e.value,
+                                        onTap: _isLevelUnlocked(_progress, e.key) ? () => Navigator.pushNamed(
+                                          context, '/lessons',
+                                          arguments: e.value.level,
+                                        ) : () => ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(content: Text('🔒 Complete the previous level first!'),
+                                          behavior: SnackBarBehavior.floating)),
+                                      )
+                                  ).toList(),
+                                ),
+                              ),
 
                     // Quick practice
                     const SectionHeader(tag: 'QUICK PRACTICE'),
