@@ -156,12 +156,19 @@ function handleSubmit(PDO $db):void{
     if($last!==$today) $db->prepare($last===$yday
         ?'UPDATE users SET streak_days=streak_days+1 WHERE id=?'
         :'UPDATE users SET streak_days=1 WHERE id=?')->execute([$userId]);
+    payReferralBonusIfEligible($db,$userId);
     if($totalCount>0&&$correctCount/$totalCount>=0.8){
         $ps=$db->prepare("SELECT COUNT(DISTINCT category) AS passed FROM quiz_results WHERE user_id=? AND level=? AND (correct_count::float/total_count)>=0.8");
         $ps->execute([$userId,$level]); $passed=(int)($ps->fetch()['passed']??0);
         $completed=min($passed,6); $examUnlocked=$completed>=4;
+        // 6 placeholders (4 in VALUES, 2 in the ON CONFLICT DO UPDATE SET)
+        // need 6 bound values — this only ever passed 4, so any quiz scoring
+        // >=80% (the only path that reaches this query) threw a fatal
+        // "Invalid parameter number" and the client just saw a generic
+        // error, even though the quiz result itself had already saved.
+        $examUnlockedVal=$examUnlocked?'true':'false';
         $db->prepare('INSERT INTO user_level_progress (user_id,level,completed_topics,exam_unlocked) VALUES (?,?,?,?) ON CONFLICT (user_id,level) DO UPDATE SET completed_topics=GREATEST(user_level_progress.completed_topics,?),exam_unlocked=?,updated_at=NOW()')
-           ->execute([$userId,$level,$completed,$examUnlocked?'true':'false']);
+           ->execute([$userId,$level,$completed,$examUnlockedVal,$completed,$examUnlockedVal]);
         if($completed>=6){
             $ft=$db->prepare('SELECT fcm_token FROM users WHERE id=? AND fcm_token IS NOT NULL');
             $ft->execute([$userId]); $fr=$ft->fetch();
@@ -180,6 +187,63 @@ function handleSubmit(PDO $db):void{
         'perfect_bonus'=>$perfectBonus,'total_coins'=>(int)$ud['coins'],
         'streak_days'=>(int)$ud['streak_days'],'new_badges'=>$newBadges]);
 }
+// ── Referral anti-abuse: pay the referrer only once their referee actually
+// does something (finishes a quiz), not the instant a code is claimed — see
+// migration 021. Runs on every submission but only ever does anything once
+// per referred user, and is deliberately non-fatal to the quiz result if it
+// fails (this is a side-effect, not the thing the user is waiting on).
+function payReferralBonusIfEligible(PDO $db,int $refereeUserId):void{
+    try {
+        // Atomically claim this referral's resolution — first quiz only.
+        $claim=$db->prepare(
+            'UPDATE users SET referral_bonus_paid_at=NOW()
+             WHERE id=? AND referred_by_id IS NOT NULL AND referral_bonus_paid_at IS NULL
+             RETURNING referred_by_id'
+        );
+        $claim->execute([$refereeUserId]);
+        $row=$claim->fetch();
+        if(!$row) return; // not a referred user, or already resolved
+        $referrerId=(int)$row['referred_by_id'];
+
+        $cfg=require dirname(__DIR__).'/config/config.php';
+        $cap=(int)($cfg['referral_lifetime_cap']??20);
+        $bonus=(int)($cfg['coins']['referral_referrer_bonus']??50);
+
+        // referral_bonus_paid_at doubles as "resolved" for capped-out
+        // referrals too (see migration 021), so this count only ever grows
+        // and a referrer who's hit the cap stays capped — no separate
+        // paid-vs-skipped bookkeeping needed.
+        $countStmt=$db->prepare(
+            'SELECT COUNT(*) FROM users WHERE referred_by_id=? AND referral_bonus_paid_at IS NOT NULL'
+        );
+        $countStmt->execute([$referrerId]);
+        if((int)$countStmt->fetchColumn()>$cap){
+            Monitor::info('referral_cap',"Referrer $referrerId at referral_lifetime_cap ($cap) — skipped payout",['referee_id'=>$refereeUserId]);
+            return;
+        }
+
+        $db->beginTransaction();
+        $lock=$db->prepare('SELECT coins FROM users WHERE id=? FOR UPDATE');
+        $lock->execute([$referrerId]);
+        if(!$lock->fetch()){ $db->rollBack(); return; }
+
+        $db->prepare('UPDATE users SET coins=coins+?, referral_coins=referral_coins+? WHERE id=?')
+           ->execute([$bonus,$bonus,$referrerId]);
+
+        $balStmt=$db->prepare('SELECT coins FROM users WHERE id=?');
+        $balStmt->execute([$referrerId]);
+        $bal=(int)($balStmt->fetch()['coins']??0);
+        $db->prepare(
+            'INSERT INTO coin_transactions (user_id, amount, balance_after, type, reference_id, description)
+             VALUES (?,?,?,?,?,?)'
+        )->execute([$referrerId,$bonus,$bal,'referral_bonus',$refereeUserId,'Referred friend completed their first quiz']);
+        $db->commit();
+    } catch (\Throwable $e) {
+        if($db->inTransaction()) $db->rollBack();
+        Monitor::error('referral_payout',$e->getMessage(),['referee_id'=>$refereeUserId]);
+    }
+}
+
 function checkBadges(PDO $db,int $uid,string $level,int $correct,int $total,int $time):array{
     $awarded=[];
     $bs=$db->prepare('SELECT b.* FROM badges b WHERE b.id NOT IN (SELECT badge_id FROM user_badges WHERE user_id=?)');

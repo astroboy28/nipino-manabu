@@ -26,6 +26,9 @@ match (true) {
 function handleMyLink(PDO $db): void {
     $claims = Auth::requireAuth();
     $userId = (int) $claims['sub'];
+    $cfg    = require dirname(__DIR__) . '/config/config.php';
+    $referrerBonus = (int) ($cfg['coins']['referral_referrer_bonus'] ?? 50);
+    $newUserBonus  = (int) ($cfg['coins']['referral_new_user_bonus'] ?? 50);
 
     $stmt = $db->prepare('SELECT referral_code, referral_coins FROM users WHERE id=?');
     $stmt->execute([$userId]);
@@ -34,7 +37,7 @@ function handleMyLink(PDO $db): void {
     $code       = $user['referral_code'];
     $deepLink   = "nipinomanabu://invite/{$code}";
     $webLink    = "https://nipino-manabu.com/invite/{$code}";
-    $shareText  = "Join me on Nipino-Manabu and learn Japanese! 🇯🇵 Use my invite link to get 50 bonus coins: {$webLink}";
+    $shareText  = "Join me on Nipino-Manabu and learn Japanese! 🇯🇵 Use my invite link to get {$newUserBonus} bonus coins: {$webLink}";
 
     respond(200, true, 'Referral link fetched.', [
         'referral_code'  => $code,
@@ -42,8 +45,8 @@ function handleMyLink(PDO $db): void {
         'web_link'       => $webLink,
         'share_text'     => $shareText,
         'coins_earned'   => (int)($user['referral_coins'] ?? 0),
-        'reward_per_ref' => 50,  // coins you earn when someone uses your link
-        'new_user_bonus' => 50,  // coins new user gets for using a referral
+        'reward_per_ref' => $referrerBonus, // coins you earn — paid once the friend finishes a quiz, not on signup
+        'new_user_bonus' => $newUserBonus,  // coins new user gets immediately for using a referral
     ]);
 }
 
@@ -67,8 +70,14 @@ function handleClaim(PDO $db): void {
     if (!$referrer)               { respond(404, false, 'Invalid referral code.'); return; }
     if ((int)$referrer['id'] === $newUserId) { respond(409, false, 'Cannot use your own code.'); return; }
 
-    $newUserBonus  = 50;
-    $referrerBonus = 50;
+    $cfg          = require dirname(__DIR__) . '/config/config.php';
+    $newUserBonus = (int) ($cfg['coins']['referral_new_user_bonus'] ?? 50);
+    // The referrer's bonus is NOT granted here — see migration 021. Paying
+    // both sides the instant a code is claimed, with no cap, made
+    // reciprocal referral farming (two accounts claiming each other's
+    // codes) a free, unlimited coin source. It's granted later, from
+    // quiz.php, once this referee actually completes a quiz, and only if
+    // the referrer hasn't hit referral_lifetime_cap yet.
 
     $db->beginTransaction();
     try {
@@ -95,30 +104,13 @@ function handleClaim(PDO $db): void {
             'UPDATE users SET coins=coins+? WHERE id=?'
         )->execute([$newUserBonus, $newUserId]);
 
-        // Grant coins to referrer
-        // 3 placeholders (coins, referral_coins, id) need 3 bound values —
-        // this previously passed only 2, so every claim on a valid,
-        // unclaimed code threw "Invalid parameter number" and rolled back.
-        // Combined with the deep-link claim firing before the user had a
-        // session (fixed client-side), referral claiming had never
-        // actually succeeded for anyone.
+        $balStmt = $db->prepare('SELECT coins FROM users WHERE id=?');
+        $balStmt->execute([$newUserId]);
+        $bal = (int) ($balStmt->fetch()['coins'] ?? 0);
         $db->prepare(
-            'UPDATE users SET coins=coins+?, referral_coins=referral_coins+? WHERE id=?'
-        )->execute([$referrerBonus, $referrerBonus, $referrer['id']]);
-
-        // Transaction records
-        foreach ([
-            [$newUserId,        $newUserBonus,  'referral_bonus', 'Joined via referral link'],
-            [$referrer['id'],   $referrerBonus, 'referral_bonus', "Friend joined using your referral code"],
-        ] as [$uid, $amt, $type, $desc]) {
-            $balStmt = $db->prepare('SELECT coins FROM users WHERE id=?');
-            $balStmt->execute([$uid]);
-            $bal = (int)($balStmt->fetch()['coins'] ?? 0);
-            $db->prepare(
-                'INSERT INTO coin_transactions (user_id, amount, balance_after, type, description)
-                 VALUES (?,?,?,?,?)'
-            )->execute([$uid, $amt, $bal, $type, $desc]);
-        }
+            'INSERT INTO coin_transactions (user_id, amount, balance_after, type, description)
+             VALUES (?,?,?,?,?)'
+        )->execute([$newUserId, $newUserBonus, $bal, 'referral_bonus', 'Joined via referral link']);
 
         $db->commit();
     } catch (\Exception $e) {

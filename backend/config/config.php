@@ -61,7 +61,15 @@ return [
         'perfect_bonus'  => 25,
         'wrong_answer_penalty' => 5,
         'daily_login_bonus'    => 10,
+        'referral_new_user_bonus' => 50, // paid to the referee at claim time
+        'referral_referrer_bonus' => 50, // paid to the referrer once the referee finishes a quiz
     ],
+
+    // Anti-abuse: caps how many times a single account can be paid for
+    // referring someone. Without this, two colluding accounts could
+    // reciprocally claim each other's codes for unlimited free coins —
+    // this doesn't stop that outright, but bounds the damage per account.
+    'referral_lifetime_cap' => 20,
 
     // ── IAP product → coins mapping ───────────────────────────────────────────
     // 'type' defaults to 'consumable' when absent. 'subscription' products are
