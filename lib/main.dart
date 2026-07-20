@@ -9,6 +9,7 @@ import 'package:app_links/app_links.dart';
 
 import 'theme/app_theme.dart';
 import 'services/api_service.dart';
+import 'services/iap_listener_service.dart';
 import 'services/auth_provider.dart';
 import 'services/notification_service.dart';
 import 'services/social_api_service.dart';
@@ -75,6 +76,7 @@ class _NipinoManabuAppState extends State<NipinoManabuApp> {
     super.initState();
     ApiService.onSessionExpired = _handleSessionExpired;
     _initDeepLinks();
+    IapListenerService.instance.start(widget.navigatorKey);
   }
 
   void _handleSessionExpired() {
@@ -139,7 +141,14 @@ class _NipinoManabuAppState extends State<NipinoManabuApp> {
       case 'invite':
         final code = segments.isNotEmpty ? segments.first : null;
         if (code != null) {
-          SocialApiService.claimReferral(code);
+          // Most taps on this link are a brand-new install with no session
+          // yet, so claiming immediately just 401s and silently drops the
+          // code. Persist it either way and let AuthProvider retry the
+          // claim right after register/login succeeds.
+          ApiService.savePendingReferralCode(code);
+          ApiService.getToken().then((token) {
+            if (token != null) SocialApiService.claimReferral(code);
+          });
         }
         break;
       case 'challenge':

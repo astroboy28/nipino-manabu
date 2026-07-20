@@ -77,7 +77,7 @@ function handleProfile(PDO $db): void {
 
     $stmt = $db->prepare(
         'SELECT id, uuid, username, email, coins, streak_days,
-                current_level, total_score, avatar_url, created_at
+                current_level, total_score, avatar_url, is_verified, is_admin, created_at
          FROM users WHERE id=? AND is_active=TRUE'
     );
     $stmt->execute([$userId]);

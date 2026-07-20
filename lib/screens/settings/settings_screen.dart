@@ -92,8 +92,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const Text(
               'This will:\n'
               '• Immediately deactivate your account\n'
-              '• Permanently delete all your data in 30 days\n'
-              '• Cancel any active subscriptions\n\n'
+              '• Permanently delete all your data in 30 days\n\n'
+              'This does NOT cancel an active subscription — Apple/Google '
+              'keep billing until you cancel it yourself from your '
+              'App Store / Play Store account settings.\n\n'
               'Enter your password to confirm:',
               style: TextStyle(fontSize: 13,
                   color: AppColors.muted, height: 1.5)),
@@ -348,6 +350,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     subtitle: 'Buy coins or go premium',
                     onTap: () => Navigator.pushNamed(context, '/store'),
                   ),
+                  _SettingRow(
+                    icon: Icons.mail_outline,
+                    label: 'Invitations',
+                    subtitle: 'Duel invites and challenge invites',
+                    onTap: () => Navigator.pushNamed(context, '/invitations'),
+                  ),
+                  if (user?.isAdmin == true)
+                    _SettingRow(
+                      icon: Icons.admin_panel_settings_outlined,
+                      label: 'Admin panel',
+                      subtitle: 'Create challenges, finalize, broadcast',
+                      onTap: () => Navigator.pushNamed(context, '/admin'),
+                    ),
 
                   const SizedBox(height: 16),
                   _SectionLabel('NOTIFICATIONS'),

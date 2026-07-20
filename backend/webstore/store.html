@@ -133,7 +133,7 @@ h1{font-size:22px;font-weight:700;margin-bottom:6px}
 const API  = 'https://api.nipino-manabu.com/v1';
 const STRIPE_PK = 'REPLACE_WITH_STRIPE_PUBLISHABLE_KEY';
 
-let stripe, elements, selectedProduct, authToken;
+let stripe, elements, selectedProduct, authToken, currentPaymentIntentId;
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 stripe = Stripe(STRIPE_PK);
@@ -208,6 +208,7 @@ async function initStripeElements(productId) {
   const res  = await apiFetch('/webpayment/stripe-create', { product_id: productId });
   if (!res.success) { showError(res.message); return; }
 
+  currentPaymentIntentId = res.payment_intent_id;
   elements = stripe.elements({ clientSecret: res.client_secret });
   const el  = elements.create('payment');
   el.mount('#stripe-payment-element');
@@ -283,7 +284,7 @@ async function pollOrderStatus() {
     await new Promise(r => setTimeout(r, 3000));
     try {
       const res = await fetch(
-        `${API}/webpayment/order-status?order_id=latest`,
+        `${API}/webpayment/order-status?order_id=${encodeURIComponent(currentPaymentIntentId)}`,
         { headers: { Authorization: 'Bearer ' + authToken } }
       );
       const data = await res.json();

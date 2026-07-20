@@ -356,6 +356,55 @@ function handleExport(PDO $db): void {
     $notifStmt->execute([$userId]);
     $notifications = $notifStmt->fetchAll();
 
+    // 7. Coin transaction ledger (full audit trail — added after the original
+    // 2024-era export was written, so it was missing every coin movement)
+    $coinStmt = $db->prepare(
+        'SELECT amount, balance_after, type, reference_id, description, created_at
+         FROM coin_transactions WHERE user_id = ?
+         ORDER BY created_at DESC LIMIT 2000'
+    );
+    $coinStmt->execute([$userId]);
+    $coinTransactions = $coinStmt->fetchAll();
+
+    // 8. Duel history (rooms played + per-question answers)
+    $duelStmt = $db->prepare(
+        "SELECT dr.uuid AS room_uuid, dr.level, dr.category, dr.status,
+                dp.status AS my_status, dp.score, dp.correct_count,
+                dp.coins_wagered, dp.joined_at, dp.finished_at
+         FROM duel_participants dp
+         JOIN duel_rooms dr ON dr.id = dp.room_id
+         WHERE dp.user_id = ? ORDER BY dp.joined_at DESC LIMIT 500"
+    );
+    $duelStmt->execute([$userId]);
+    $duelHistory = $duelStmt->fetchAll();
+
+    // 9. Challenge event participation
+    $challengeStmt = $db->prepare(
+        "SELECT ce.title, ce.level, ce.category, cp.score, cp.correct_count,
+                cp.rank_pos, cp.coins_awarded, cp.joined_at, cp.completed_at
+         FROM challenge_participants cp
+         JOIN challenge_events ce ON ce.id = cp.event_id
+         WHERE cp.user_id = ? ORDER BY cp.joined_at DESC LIMIT 500"
+    );
+    $challengeStmt->execute([$userId]);
+    $challengeHistory = $challengeStmt->fetchAll();
+
+    // 10. Subscription / entitlement state (currently held, not full IAP
+    // receipt history — that's already covered by "purchases" above)
+    $subStmt = $db->prepare(
+        'SELECT subscription_product_id, subscription_platform, subscription_expires_at
+         FROM users WHERE id = ?'
+    );
+    $subStmt->execute([$userId]);
+    $subscription = $subStmt->fetch() ?: null;
+
+    // 11. Referral relationships (code owned, who referred this account)
+    $refStmt = $db->prepare(
+        'SELECT referral_code, referred_by_id FROM users WHERE id = ?'
+    );
+    $refStmt->execute([$userId]);
+    $referral = $refStmt->fetch() ?: null;
+
     // ── Build export package ──────────────────────────────────────────────────
     $export = [
         'export_info' => [
@@ -372,11 +421,21 @@ function handleExport(PDO $db): void {
         'badges_earned' => $badges,
         'purchases'     => $purchases,
         'notifications' => $notifications,
+        'coin_transactions' => $coinTransactions,
+        'duel_history'      => $duelHistory,
+        'challenge_history' => $challengeHistory,
+        'subscription'      => $subscription,
+        'referral'          => $referral,
         'data_categories' => [
             'profile'      => 'Username, email, learning level, coins, streak',
             'quiz_results' => 'Quiz scores, time taken, coins earned per session',
             'progress'     => 'Topic completion per JLPT level',
             'purchases'    => 'IAP product IDs and coin grants (no card data)',
+            'coin_transactions' => 'Full coin ledger — every credit/debit with balance and reason',
+            'duel_history'      => 'Duel rooms played, opponents\' scores not included, wagers and outcomes',
+            'challenge_history' => 'Challenge events entered, scores, ranks, prizes',
+            'subscription'      => 'Current subscription product/platform/expiry, if any',
+            'referral'          => 'Your referral code and who referred you, if anyone',
         ],
         'retention_policy' =>
             'Data retained while account is active. '

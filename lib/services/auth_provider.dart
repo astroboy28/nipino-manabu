@@ -2,6 +2,7 @@
 import 'package:flutter/foundation.dart';
 import '../models/models.dart';
 import 'api_service.dart';
+import 'social_api_service.dart';
 
 class AuthProvider extends ChangeNotifier {
   User?  _user;
@@ -52,6 +53,7 @@ class AuthProvider extends ChangeNotifier {
     if (res.success) {
       _user = res.data;
       notifyListeners();
+      _tryClaimPendingReferral();
       return true;
     }
     _setError(res.error);
@@ -70,10 +72,26 @@ class AuthProvider extends ChangeNotifier {
     if (res.success) {
       _user = res.data;
       notifyListeners();
+      _tryClaimPendingReferral();
       return true;
     }
     _setError(res.error ?? 'Login failed');
     return false;
+  }
+
+  // A referral code picked up from a deep link before the user had a
+  // session (the common case — a fresh install) is stashed by ApiService;
+  // redeem it now that we actually have auth. Only clear it on a definitive
+  // server response so a network hiccup doesn't lose the code — it'll just
+  // retry on the next login.
+  Future<void> _tryClaimPendingReferral() async {
+    final code = await ApiService.getPendingReferralCode();
+    if (code == null) return;
+    final res = await SocialApiService.claimReferral(code);
+    if (res.statusCode != 0) {
+      await ApiService.clearPendingReferralCode();
+      if (res.success) await refreshUser(); // coins were just credited
+    }
   }
 
   // ── Logout ─────────────────────────────────────────────────────────────────
@@ -97,6 +115,7 @@ class AuthProvider extends ChangeNotifier {
     if (token != null) {
       final res = await ApiService.getProfile();
       if (res.success) _user = res.data;
+      _tryClaimPendingReferral();
     }
     _setLoading(false);
   }

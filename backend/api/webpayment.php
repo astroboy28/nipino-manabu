@@ -22,6 +22,15 @@ match (true) {
     $method === 'POST' && $action === 'paypal-create'     => handlePayPalCreate($db),
     $method === 'POST' && $action === 'paypal-capture'    => handlePayPalCapture($db),
     $method === 'GET'  && $action === 'order-status'      => handleOrderStatus($db),
+    // Browser redirect fallback — paypal-create sets this as PayPal's
+    // application_context.return_url, but it 404'd (no action here ever
+    // matched it). Normal checkout never hits it: paypal.Buttons() captures
+    // client-side via onApprove -> paypal-capture, which already has a real
+    // auth token to work with. This only fires if PayPal falls back to a
+    // full-page redirect (e.g. a popup-blocking mobile browser), so it
+    // can't safely auto-capture (a GET redirect carries no Bearer token) —
+    // it just sends the user back to finish in-page instead of 404ing.
+    $method === 'GET'  && $action === 'paypal-return'     => handlePayPalReturn(),
     // Webhooks — no auth, verified by signature
     $method === 'POST' && $action === 'stripe-webhook'    => handleStripeWebhook($db),
     $method === 'POST' && $action === 'paypal-webhook'    => handlePayPalWebhook($db),
@@ -110,10 +119,11 @@ function handleStripeCreate(PDO $db): void {
     ]);
 
     respond(200, true, 'Payment intent created.', [
-        'client_secret' => $intent['client_secret'],
-        'amount'        => $prod['amount'],
-        'coins'         => $prod['coins'],
-        'label'         => $prod['label'],
+        'client_secret'      => $intent['client_secret'],
+        'payment_intent_id'  => $intent['id'],
+        'amount'             => $prod['amount'],
+        'coins'              => $prod['coins'],
+        'label'              => $prod['label'],
     ]);
 }
 
@@ -144,12 +154,23 @@ function handleStripeWebhook(PDO $db): void {
 
         if ($userId && $coins > 0) {
             grantWebCoins($db, $intentId, $userId, $coins, $productId);
+        } else {
+            Monitor::error('stripe_webhook',
+                'payment_intent.succeeded with missing/zero metadata — coins not granted',
+                ['intent_id' => $intentId, 'user_id' => $userId, 'coins' => $coins]);
         }
     } elseif ($type === 'payment_intent.payment_failed') {
         $intentId = $event['data']['object']['id'];
+        // Must not downgrade an already-completed order — Stripe can
+        // redeliver an earlier failed attempt's webhook (retry backoff)
+        // after a later retry on the same intent actually succeeded and
+        // already granted coins. Without this guard, that stale delivery
+        // flips status back to 'failed', and the next redelivery of the
+        // succeeded event then passes grantWebCoins()'s idempotency check
+        // and double-grants.
         $db->prepare(
             "UPDATE web_payment_orders SET status='failed', updated_at=NOW()
-             WHERE gateway_order_id=?"
+             WHERE gateway_order_id=? AND status <> 'completed'"
         )->execute([$intentId]);
     }
 
@@ -165,11 +186,24 @@ function verifyStripeSignature(string $payload, string $sigHeader, string $secre
         $parts[$k][] = $v;
     }
     $timestamp = $parts['t'][0] ?? '';
+    // Reject stale timestamps — without this, a captured valid payload +
+    // signature is replayable indefinitely by anyone who intercepts it.
+    if (!$timestamp || abs(time() - (int)$timestamp) > 300) return false;
     $expected  = hash_hmac('sha256', "$timestamp.$payload", $secret);
     foreach ($parts['v1'] ?? [] as $sig) {
         if (hash_equals($expected, $sig)) return true;
     }
     return false;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PAYPAL — full-page redirect fallback (see routing comment above)
+// ════════════════════════════════════════════════════════════════════════════
+function handlePayPalReturn(): void {
+    $cfg     = require dirname(__DIR__) . '/config/config.php';
+    $baseUrl = rtrim($cfg['app']['url'], '/');
+    header("Location: $baseUrl/store?resume=1");
+    http_response_code(302);
 }
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -514,6 +514,68 @@ function handleForfeit(PDO $db): void {
     $body   = Auth::getJsonBody();
     $roomId = (int) ($body['room_id'] ?? 0);
 
+    $roomStmt = $db->prepare("SELECT status FROM duel_rooms WHERE id=?");
+    $roomStmt->execute([$roomId]);
+    $room = $roomStmt->fetch();
+    if (!$room) { respond(404, false, 'Room not found.'); return; }
+
+    // The duel hasn't started yet — this is a lobby "leave", not a mid-game
+    // forfeit. The UI promises an immediate refund here ("coins refunded if
+    // not started"); previously that promise was only kept ~30 minutes
+    // later, by the stale-room cron (expire_duel_rooms), because this
+    // handler always applied the mid-game forfeit path regardless of room
+    // status.
+    if ($room['status'] === 'waiting') {
+        $db->beginTransaction();
+        try {
+            $wagerStmt = $db->prepare(
+                "SELECT coins_wagered FROM duel_participants
+                 WHERE room_id=? AND user_id=? AND status IN ('joined','ready')
+                 FOR UPDATE"
+            );
+            $wagerStmt->execute([$roomId, $userId]);
+            $part = $wagerStmt->fetch();
+            if (!$part) {
+                $db->rollBack();
+                respond(409, false, 'Cannot leave.'); return;
+            }
+
+            $wager = (int) $part['coins_wagered'];
+            if ($wager > 0) {
+                $db->prepare('UPDATE users SET coins = coins + ? WHERE id=?')
+                   ->execute([$wager, $userId]);
+                $balStmt = $db->prepare('SELECT coins FROM users WHERE id=?');
+                $balStmt->execute([$userId]);
+                $balance = (int) $balStmt->fetchColumn();
+                $db->prepare(
+                    'INSERT INTO coin_transactions (user_id, amount, balance_after, type, reference_id, description)
+                     VALUES (?,?,?,?,?,?)'
+                )->execute([$userId, $wager, $balance, 'duel_refund', $roomId, 'Left duel lobby before start']);
+            }
+
+            $db->prepare('DELETE FROM duel_participants WHERE room_id=? AND user_id=?')
+               ->execute([$roomId, $userId]);
+
+            // If nobody's left in the lobby, cancel the room outright instead
+            // of leaving it to sit idle for expire_duel_rooms to clean up.
+            $remainStmt = $db->prepare('SELECT COUNT(*) FROM duel_participants WHERE room_id=?');
+            $remainStmt->execute([$roomId]);
+            if ((int) $remainStmt->fetchColumn() === 0) {
+                $db->prepare("UPDATE duel_rooms SET status='cancelled' WHERE id=?")
+                   ->execute([$roomId]);
+            }
+
+            $db->commit();
+        } catch (\Throwable $e) {
+            $db->rollBack();
+            Monitor::error('duel_leave', $e->getMessage(), ['room_id' => $roomId], $userId);
+            respond(500, false, 'Could not leave duel.'); return;
+        }
+        respond(200, true, 'Left the lobby. Coins refunded.');
+        return;
+    }
+
+    // Duel already active — this is a real forfeit, coins are lost.
     $stmt = $db->prepare(
         "UPDATE duel_participants SET status='forfeit', finished_at=NOW()
          WHERE room_id=? AND user_id=?

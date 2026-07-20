@@ -1,13 +1,12 @@
 // lib/screens/store/store_screen.dart
 // ─── Coin store with real IAP using in_app_purchase package ─────────────────
-import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:provider/provider.dart';
 import '../../theme/app_theme.dart';
 import '../../services/auth_provider.dart';
 import '../../services/api_service.dart';
+import '../../services/iap_listener_service.dart';
 
 class StoreScreen extends StatefulWidget {
   const StoreScreen({super.key});
@@ -16,7 +15,6 @@ class StoreScreen extends StatefulWidget {
 
 class _StoreScreenState extends State<StoreScreen> {
   final InAppPurchase _iap = InAppPurchase.instance;
-  late StreamSubscription<List<PurchaseDetails>> _sub;
 
   List<ProductDetails> _products = [];
   bool _available  = false;
@@ -41,10 +39,22 @@ class _StoreScreenState extends State<StoreScreen> {
   @override
   void initState() {
     super.initState();
-    _sub = _iap.purchaseStream.listen(_onPurchaseUpdate,
-        onError: (e) => setState(() => _error = e.toString()));
+    // Validation itself happens in IapListenerService (app-wide, so a
+    // renewal redelivered while this screen isn't open still gets
+    // processed) — this screen only reacts to the outcome for its own UI.
+    IapListenerService.instance.onGrant = _handleGrant;
+    IapListenerService.instance.onError = (msg) {
+      if (mounted) setState(() { _processing = null; _error = msg; });
+    };
     _loadProducts();
     _loadSubscriptionStatus();
+  }
+
+  void _handleGrant(String productId, int coins, String? subscriptionExpiresAt) {
+    if (!mounted) return;
+    setState(() => _processing = null);
+    if (_subscriptionIds.contains(productId)) _loadSubscriptionStatus();
+    _showSuccess(coins, subscriptionExpiresAt: subscriptionExpiresAt);
   }
 
   Future<void> _loadSubscriptionStatus() async {
@@ -86,65 +96,6 @@ class _StoreScreenState extends State<StoreScreen> {
     }
   }
 
-  Future<void> _onPurchaseUpdate(List<PurchaseDetails> purchases) async {
-    for (final purchase in purchases) {
-      switch (purchase.status) {
-        case PurchaseStatus.pending:
-          // Show pending UI
-          break;
-
-        case PurchaseStatus.purchased:
-        case PurchaseStatus.restored:
-          // Verify with our backend
-          final receipt = Platform.isIOS
-              ? purchase.verificationData.serverVerificationData
-              : purchase.verificationData.localVerificationData;
-
-          final res = await ApiService.validateIAPPurchase(
-            productId:   purchase.productID,
-            receiptData: receipt,
-            platform:    Platform.isIOS ? 'ios' : 'android',
-          );
-
-          if (res.success) {
-            // Consume the purchase
-            await _iap.completePurchase(purchase);
-            // Refresh user coins
-            await context.read<AuthProvider>().refreshUser();
-            if (_subscriptionIds.contains(purchase.productID)) {
-              await _loadSubscriptionStatus();
-            }
-            if (mounted) {
-              setState(() => _processing = null);
-              _showSuccess(res.data?['coins_granted'] ?? 0,
-                  subscriptionExpiresAt: res.data?['subscription_expires_at'] as String?);
-            }
-          } else {
-            if (mounted) {
-              setState(() {
-                _processing = null;
-                _error = res.error ?? 'Purchase verification failed.';
-              });
-            }
-          }
-          break;
-
-        case PurchaseStatus.error:
-          if (mounted) {
-            setState(() {
-              _processing = null;
-              _error = purchase.error?.message ?? 'Purchase failed.';
-            });
-          }
-          break;
-
-        case PurchaseStatus.canceled:
-          if (mounted) setState(() => _processing = null);
-          break;
-      }
-    }
-  }
-
   void _showSuccess(int coins, {String? subscriptionExpiresAt}) {
     final subMsg = subscriptionExpiresAt != null
         ? '\n\nYour Monthly Pass is active until ${subscriptionExpiresAt.split(' ').first}.'
@@ -171,7 +122,11 @@ class _StoreScreenState extends State<StoreScreen> {
   }
 
   @override
-  void dispose() { _sub.cancel(); super.dispose(); }
+  void dispose() {
+    IapListenerService.instance.onGrant = null;
+    IapListenerService.instance.onError = null;
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {

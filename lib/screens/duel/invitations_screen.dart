@@ -224,9 +224,35 @@ class _ReferralScreenState extends State<ReferralScreen> {
   Map<String, dynamic>? _data;
   bool _loading = true;
   bool _copied  = false;
+  final _codeCtrl = TextEditingController();
+  bool _claiming = false;
+  String? _claimMsg;
+  bool _claimOk = false;
 
   @override
   void initState() { super.initState(); _load(); }
+
+  @override
+  void dispose() { _codeCtrl.dispose(); super.dispose(); }
+
+  Future<void> _claimCode() async {
+    final code = _codeCtrl.text.trim();
+    if (code.isEmpty) return;
+    setState(() { _claiming = true; _claimMsg = null; });
+    final res = await SocialApiService.claimReferral(code);
+    if (!mounted) return;
+    setState(() {
+      _claiming = false;
+      _claimOk  = res.success;
+      _claimMsg = res.success
+          ? '🎉 Code redeemed! Coins added to your balance.'
+          : (res.data?['message'] ?? res.error ?? 'Could not redeem that code.');
+    });
+    if (res.success) {
+      _codeCtrl.clear();
+      _load(); // refresh coins-earned stat
+    }
+  }
 
   Future<void> _load() async {
     final res = await SocialApiService.getMyReferralLink();
@@ -408,6 +434,44 @@ class _ReferralScreenState extends State<ReferralScreen> {
                         isLast: true),
                   ]),
                 ),
+                const SizedBox(height: 20),
+
+                // Manual redemption — for a code received any way other than
+                // tapping a link directly (read aloud, texted as plain text,
+                // or a link tapped before the app was installed).
+                const Text('Have a friend\'s code?',
+                    style: TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w600,
+                        color: AppColors.ink)),
+                const SizedBox(height: 8),
+                Row(children: [
+                  Expanded(child: TextField(
+                    controller: _codeCtrl,
+                    textCapitalization: TextCapitalization.characters,
+                    decoration: InputDecoration(
+                      hintText: 'Enter code',
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8)),
+                    ),
+                  )),
+                  const SizedBox(width: 10),
+                  ElevatedButton(
+                    onPressed: _claiming ? null : _claimCode,
+                    child: _claiming
+                        ? const SizedBox(width: 16, height: 16,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white))
+                        : const Text('Redeem'),
+                  ),
+                ]),
+                if (_claimMsg != null) ...[
+                  const SizedBox(height: 8),
+                  Text(_claimMsg!,
+                      style: TextStyle(fontSize: 12,
+                          color: _claimOk ? AppColors.green : AppColors.red)),
+                ],
               ]),
       ),
     );

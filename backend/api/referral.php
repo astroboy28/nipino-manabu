@@ -96,9 +96,15 @@ function handleClaim(PDO $db): void {
         )->execute([$newUserBonus, $newUserId]);
 
         // Grant coins to referrer
+        // 3 placeholders (coins, referral_coins, id) need 3 bound values —
+        // this previously passed only 2, so every claim on a valid,
+        // unclaimed code threw "Invalid parameter number" and rolled back.
+        // Combined with the deep-link claim firing before the user had a
+        // session (fixed client-side), referral claiming had never
+        // actually succeeded for anyone.
         $db->prepare(
             'UPDATE users SET coins=coins+?, referral_coins=referral_coins+? WHERE id=?'
-        )->execute([$referrerBonus, $referrer['id']]);
+        )->execute([$referrerBonus, $referrerBonus, $referrer['id']]);
 
         // Transaction records
         foreach ([

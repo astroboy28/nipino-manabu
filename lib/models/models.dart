@@ -10,12 +10,14 @@ class User {
   final String currentLevel;
   final int    totalScore;
   final bool   isVerified;
+  final bool   isAdmin;
   final String createdAt;
 
   const User({
     required this.id, required this.username, required this.email,
     required this.coins, required this.streakDays, required this.currentLevel,
-    required this.totalScore, required this.isVerified, required this.createdAt,
+    required this.totalScore, required this.isVerified, required this.isAdmin,
+    required this.createdAt,
   });
 
   factory User.fromJson(Map<String,dynamic> j) => User(
@@ -27,6 +29,7 @@ class User {
     currentLevel: j['current_level'] ?? 'N5',
     totalScore:   j['total_score'] ?? 0,
     isVerified:   j['is_verified'] == true,
+    isAdmin:      j['is_admin']    == true,
     createdAt:    j['created_at']  ?? '',
   );
 }

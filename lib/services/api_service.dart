@@ -16,6 +16,20 @@ class ApiService {
   );
   static const _tokenKey   = 'jwt_access_token';
   static const _refreshKey = 'jwt_refresh_token';
+  static const _pendingReferralKey = 'pending_referral_code';
+
+  // A referral deep link (nipinomanabu://invite/{code}) is usually tapped by
+  // someone who doesn't have an account yet, so claiming it right away 401s
+  // (referral/claim requires auth) and the code was previously just dropped
+  // on the floor — the entire "install via my link" flow could never work
+  // for its actual target audience. Persist it and retry after the user
+  // finishes registering/logging in (see AuthProvider).
+  static Future<void> savePendingReferralCode(String code) =>
+      _storage.write(key: _pendingReferralKey, value: code);
+  static Future<String?> getPendingReferralCode() =>
+      _storage.read(key: _pendingReferralKey);
+  static Future<void> clearPendingReferralCode() =>
+      _storage.delete(key: _pendingReferralKey);
 
   // Set once at app startup (see main.dart) so a hard-401 (refresh token
   // also expired/invalid) can route back to the login screen instead of
