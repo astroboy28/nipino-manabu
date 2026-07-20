@@ -10,7 +10,6 @@ import '../../services/api_service.dart';
 import '../../services/auth_provider.dart';
 import '../../widgets/quiz_media_widget.dart';
 import '../../services/sound_service.dart';
-import 'result_screen.dart';
 
 class QuizScreen extends StatefulWidget {
   const QuizScreen({super.key});

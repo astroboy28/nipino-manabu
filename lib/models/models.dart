@@ -131,8 +131,6 @@ class LevelProgress {
     totalTopics:     j['total_topics']     ?? 6,
     examUnlocked:    j['exam_unlocked']    == true,
   );
-
-  double get _percent => totalTopics == 0 ? 0 : completedTopics / totalTopics;
 }
 
 class LeaderboardEntry {
