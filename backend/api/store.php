@@ -6,17 +6,23 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/config/Database.php';
 require_once dirname(__DIR__) . '/middleware/Auth.php';
 
-Auth::securityHeaders();
-$db     = Database::connect();
-$method = $_SERVER['REQUEST_METHOD'];
-$action = $_GET['action'] ?? '';
+// Guarded so backend/cron/subscription_renewal_check.php can safely
+// require_once this file to reuse verifyAppleReceipt()/verifyGoogleReceipt()
+// directly (rather than duplicating payment-critical verification logic)
+// without also running the HTTP routing below against a nonexistent request.
+if (PHP_SAPI !== 'cli') {
+    Auth::securityHeaders();
+    $db     = Database::connect();
+    $method = $_SERVER['REQUEST_METHOD'];
+    $action = $_GET['action'] ?? '';
 
-match (true) {
-    $method === 'POST' && $action === 'validate-purchase'    => handleValidate($db),
-    $method === 'GET'  && $action === 'products'             => handleProducts(),
-    $method === 'GET'  && $action === 'subscription-status'  => handleSubscriptionStatus($db),
-    default => respond(404, false, 'Endpoint not found'),
-};
+    match (true) {
+        $method === 'POST' && $action === 'validate-purchase'    => handleValidate($db),
+        $method === 'GET'  && $action === 'products'             => handleProducts(),
+        $method === 'GET'  && $action === 'subscription-status'  => handleSubscriptionStatus($db),
+        default => respond(404, false, 'Endpoint not found'),
+    };
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // VALIDATE IAP RECEIPT
@@ -80,11 +86,26 @@ function handleValidate(PDO $db): void {
         )->execute([$coinsToGrant, $userId]);
 
         if ($isSubscription && $expiresAt) {
-            $db->prepare(
-                'UPDATE users
-                 SET subscription_product_id=?, subscription_platform=?, subscription_expires_at=?
-                 WHERE id=?'
-            )->execute([$productId, $platform, $expiresAt, $userId]);
+            // Also store what's needed to re-check this subscription later
+            // (backend/cron/subscription_renewal_check.php) — without this,
+            // entitlement only ever updated when the client happened to
+            // resubmit a fresh receipt, which doesn't happen automatically
+            // on renewal.
+            if ($platform === 'ios') {
+                $db->prepare(
+                    'UPDATE users
+                     SET subscription_product_id=?, subscription_platform=?, subscription_expires_at=?,
+                         subscription_apple_original_txn_id=?
+                     WHERE id=?'
+                )->execute([$productId, $platform, $expiresAt, $verification['original_txn_id'] ?? null, $userId]);
+            } else {
+                $db->prepare(
+                    'UPDATE users
+                     SET subscription_product_id=?, subscription_platform=?, subscription_expires_at=?,
+                         subscription_google_purchase_token=?
+                     WHERE id=?'
+                )->execute([$productId, $platform, $expiresAt, $receiptData, $userId]);
+            }
         }
 
         $db->commit();
@@ -223,15 +244,23 @@ function verifyAppleSandbox(string $receiptData, string $productId, bool $isSubs
 function _appleResultFor(array $data, string $productId, bool $isSubscription): array {
     if ($isSubscription) {
         $latestExpiryMs = 0;
+        $originalTxnId  = null;
         foreach ($data['latest_receipt_info'] ?? [] as $txn) {
             if (($txn['product_id'] ?? '') !== $productId) continue;
             $expiryMs = (int)($txn['expires_date_ms'] ?? 0);
-            if ($expiryMs > $latestExpiryMs) $latestExpiryMs = $expiryMs;
+            if ($expiryMs > $latestExpiryMs) {
+                $latestExpiryMs = $expiryMs;
+                // Stable across renewals — this is what the App Store Server
+                // API needs to re-check status later, unlike the receipt
+                // blob itself (which represents a point-in-time snapshot).
+                $originalTxnId = $txn['original_transaction_id'] ?? null;
+            }
         }
         if ($latestExpiryMs <= 0) return ['valid' => false, 'expires_at' => null];
         return [
-            'valid'      => true,
-            'expires_at' => gmdate('Y-m-d H:i:s', (int)($latestExpiryMs / 1000)),
+            'valid'                => true,
+            'expires_at'           => gmdate('Y-m-d H:i:s', (int)($latestExpiryMs / 1000)),
+            'original_txn_id'      => $originalTxnId,
         ];
     }
     $inApp = $data['receipt']['in_app'] ?? [];
@@ -239,6 +268,134 @@ function _appleResultFor(array $data, string $productId, bool $isSubscription): 
         if ($item['product_id'] === $productId) return ['valid' => true, 'expires_at' => null];
     }
     return ['valid' => false, 'expires_at' => null];
+}
+
+// ── Apple App Store Server API — periodic subscription re-check ──────────────
+// NOT used for the initial purchase (that's verifyAppleReceipt() above, the
+// legacy /verifyReceipt endpoint). This is what
+// backend/cron/subscription_renewal_check.php calls to find out whether a
+// subscription has renewed/lapsed since the app last submitted a receipt —
+// without this, entitlement only ever updated when the client happened to
+// resubmit a fresh receipt, which doesn't happen automatically on renewal.
+// Needs APPLE_ASA_KEY_ID / APPLE_ASA_ISSUER_ID / APPLE_ASA_PRIVATE_KEY in
+// .env (App Store Connect → Users and Access → Integrations → App Store
+// Connect API → generate a key).
+// Returns ['valid' => bool, 'expires_at' => ?string] like the verify* functions.
+function checkAppleSubscriptionStatus(string $originalTransactionId): array {
+    $keyId    = $_ENV['APPLE_ASA_KEY_ID']      ?? '';
+    $issuerId = $_ENV['APPLE_ASA_ISSUER_ID']   ?? '';
+    $privKey  = $_ENV['APPLE_ASA_PRIVATE_KEY'] ?? '';
+    $bundleId = $_ENV['APPLE_BUNDLE_ID']       ?? 'com.nipino.manabu';
+    if (!$keyId || !$issuerId || !$privKey) {
+        error_log('Apple App Store Server API not configured (APPLE_ASA_* missing from .env)');
+        return ['valid' => false, 'expires_at' => null];
+    }
+
+    $jwt = buildAppleServerApiJwt($keyId, $issuerId, $bundleId, $privKey);
+    if (!$jwt) return ['valid' => false, 'expires_at' => null];
+
+    $cfg    = require dirname(__DIR__) . '/config/config.php';
+    $isLive = ($cfg['app']['env'] === 'production');
+    $base   = $isLive
+        ? 'https://api.storekit.itunes.apple.com'
+        : 'https://api.storekit-sandbox.itunes.apple.com';
+
+    $ch = curl_init("$base/inApps/v1/subscriptions/$originalTransactionId");
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER     => ["Authorization: Bearer $jwt"],
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_TIMEOUT        => 10,
+    ]);
+    $res  = curl_exec($ch);
+    $err  = curl_error($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($err || !$res || $code !== 200) {
+        error_log("Apple App Store Server API error (HTTP $code): " . ($err ?: $res));
+        return ['valid' => false, 'expires_at' => null];
+    }
+
+    $data = json_decode($res, true);
+    $latestExpiryMs = 0;
+    foreach ($data['data'] ?? [] as $group) {
+        foreach ($group['lastTransactions'] ?? [] as $txn) {
+            $signed = $txn['signedTransactionInfo'] ?? null;
+            if (!$signed) continue;
+            // Decoding the JWS payload WITHOUT verifying its signature is
+            // safe here specifically because this response arrived over an
+            // HTTPS connection this server initiated directly to Apple's
+            // real API host — TLS already authenticates the server. That
+            // is NOT true of a webhook (an inbound POST claiming to be
+            // Apple), which is why this app doesn't implement one.
+            $payload  = decodeJwsPayloadUnverified($signed);
+            $expiryMs = (int)($payload['expiresDate'] ?? 0);
+            if ($expiryMs > $latestExpiryMs) $latestExpiryMs = $expiryMs;
+        }
+    }
+    if ($latestExpiryMs <= 0) return ['valid' => false, 'expires_at' => null];
+    return [
+        'valid'      => $latestExpiryMs > (int)(microtime(true) * 1000),
+        'expires_at' => gmdate('Y-m-d H:i:s', (int)($latestExpiryMs / 1000)),
+    ];
+}
+
+function decodeJwsPayloadUnverified(string $jws): array {
+    $parts = explode('.', $jws);
+    if (count($parts) !== 3) return [];
+    $b64 = strtr($parts[1], '-_', '+/') . str_repeat('=', (4 - strlen($parts[1]) % 4) % 4);
+    return json_decode((string) base64_decode($b64), true) ?? [];
+}
+
+function buildAppleServerApiJwt(string $keyId, string $issuerId, string $bundleId, string $privateKeyPem): ?string {
+    $now    = time();
+    $header = Auth::base64url(json_encode(['alg' => 'ES256', 'kid' => $keyId, 'typ' => 'JWT']));
+    $claims = Auth::base64url(json_encode([
+        'iss' => $issuerId,
+        'iat' => $now,
+        'exp' => $now + 1200, // Apple caps this at 60 min; keep it short
+        'aud' => 'appstoreconnect-v1',
+        'bid' => $bundleId,
+    ]));
+    $toSign = "$header.$claims";
+
+    $key = openssl_pkey_get_private($privateKeyPem);
+    if (!$key) { error_log('Apple ASA JWT: invalid private key (APPLE_ASA_PRIVATE_KEY)'); return null; }
+
+    $signed = openssl_sign($toSign, $derSig, $key, OPENSSL_ALGO_SHA256);
+    if (!$signed) { error_log('Apple ASA JWT: signing failed'); return null; }
+
+    $rawSig = derEcdsaSignatureToRaw($derSig, 32); // P-256 -> 32-byte r + 32-byte s
+    if (!$rawSig) { error_log('Apple ASA JWT: DER->raw signature conversion failed'); return null; }
+
+    return "$toSign." . Auth::base64url($rawSig);
+}
+
+// ECDSA signatures from openssl_sign() come out DER-encoded (ASN.1 SEQUENCE
+// of two INTEGERs); JWS ES256 requires the raw concatenated r||s, each
+// zero-padded to $len bytes. Pure format conversion — no cryptographic
+// operation happens in this function.
+function derEcdsaSignatureToRaw(string $der, int $len): ?string {
+    $offset = 0;
+    if (($der[$offset] ?? '') !== "\x30") return null; // SEQUENCE
+    $offset++;
+    $seqLen = ord($der[$offset] ?? "\x00");
+    $offset++;
+    if ($seqLen & 0x80) { $offset += $seqLen & 0x7F; } // skip long-form length bytes
+
+    $parts = [];
+    for ($i = 0; $i < 2; $i++) {
+        if (($der[$offset] ?? '') !== "\x02") return null; // INTEGER
+        $offset++;
+        $intLen = ord($der[$offset] ?? "\x00");
+        $offset++;
+        $val = substr($der, $offset, $intLen);
+        $offset += $intLen;
+        if (strlen($val) > 0 && $val[0] === "\x00") $val = substr($val, 1);
+        $parts[] = str_pad($val, $len, "\x00", STR_PAD_LEFT);
+    }
+    return $parts[0] . $parts[1];
 }
 
 // ── Google Play receipt verification ─────────────────────────────────────────
